@@ -13,8 +13,8 @@
   - `processed_data/` : folder containing the processed data files
     - `interactions.parquet` : files containing all the interactions with respective weights
     - `train.parquet` : train set
-    - `val.parquet` : validation ste
-    - `test.parwuet` : test set
+    - `val.parquet` : validation set
+    - `test.parquet` : test set
     - `graph.pt` : bipartite graph of users and songs with weighted edges created using the train set
   - `project_data/` : folder containing the original data files and the script to download them
 

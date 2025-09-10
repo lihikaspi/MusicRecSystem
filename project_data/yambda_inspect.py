@@ -2,7 +2,7 @@ import pandas as pd
 import os
 import json
 import numpy as np
-from data_preprocessing import DATA_DIR
+from config import DATA_DIR
 
 # ------------------------------
 # Settings
