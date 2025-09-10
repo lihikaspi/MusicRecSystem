@@ -1,11 +1,6 @@
 import os
 import pandas as pd
-
-# ----------------------------
-# Dataset settings
-# ----------------------------
-dataset_size = "50m"  # choose "50m", "500m", "5b"
-base_folder = os.path.join(os.getcwd(), f"YambdaData{dataset_size}")
+from config import DATA_DIR, DATASET_SIZE
 
 # ----------------------------
 # Interaction types
@@ -27,7 +22,7 @@ stats_list = []
 # Explore each interaction type
 # ----------------------------
 for interaction in interactions:
-    file_path = os.path.join(base_folder, f"{interaction}.parquet")
+    file_path = os.path.join(DATA_DIR, f"{interaction}.parquet")
     if not os.path.exists(file_path):
         print(f"{interaction} not found, skipping...")
         continue
@@ -103,6 +98,6 @@ stats_df.loc[len(stats_df)] = {
 }
 
 # Save CSV
-csv_path = os.path.join(base_folder, f"YambdaStats_{dataset_size}.csv")
+csv_path = os.path.join(DATA_DIR, f"YambdaStats_{DATASET_SIZE}.csv")
 stats_df.to_csv(csv_path, index=False)
 print(f"\n✅ Stats saved to CSV: {csv_path}")

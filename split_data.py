@@ -1,12 +1,10 @@
 import os
 import pandas as pd
 from math import ceil
-
-OUTPUT_DIR = "final_project/processed_data/"
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+from config import PROCESSED_DIR
 
 # Load merged interactions parquet
-interactions = pd.read_parquet(os.path.join(OUTPUT_DIR, "interactions.parquet"))
+interactions = pd.read_parquet(os.path.join(PROCESSED_DIR, "interactions.parquet"))
 
 # Time-aware per-user split
 train, val, test = [], [], []
@@ -31,9 +29,9 @@ val = pd.concat(val)
 test = pd.concat(test)
 
 # Save splits as parquet
-train.to_parquet(os.path.join(OUTPUT_DIR, "train.parquet"), index=False)
-val.to_parquet(os.path.join(OUTPUT_DIR, "val.parquet"), index=False)
-test.to_parquet(os.path.join(OUTPUT_DIR, "test.parquet"), index=False)
+train.to_parquet(os.path.join(PROCESSED_DIR, "train.parquet"), index=False)
+val.to_parquet(os.path.join(PROCESSED_DIR, "val.parquet"), index=False)
+test.to_parquet(os.path.join(PROCESSED_DIR, "test.parquet"), index=False)
 
 print(f"✅ Train: {len(train)}, Val: {len(val)}, Test: {len(test)}")
 print(f"{count_removed_user} users were removed during the splitting process")

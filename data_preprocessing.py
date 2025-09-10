@@ -1,9 +1,8 @@
 import os
 import pandas as pd
+from config import DATA_DIR, PROCESSED_DIR
 
-DATA_DIR = "final_project/project_data/YambdaData50m/"
-OUTPUT_DIR = "final_project/processed_data/"
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+os.makedirs(PROCESSED_DIR, exist_ok=True)
 
 print("Loading parquet files...")
 # Load interactions files
@@ -75,7 +74,7 @@ Separate edge feature: keep weight as main edge weight, and store listen_count a
 interactions["edge_weight"] = interactions["weight"] + 0.01 * interactions["listen_count"]
 
 # Save processed interactions
-interactions.to_parquet(os.path.join(OUTPUT_DIR, "interactions.parquet"), index=False)
+interactions.to_parquet(os.path.join(PROCESSED_DIR, "interactions.parquet"), index=False)
 
 print(f"✅ Saved {len(interactions)} interactions")
 print(f"Users: {len(user2idx)}, Items: {len(item2idx)}")

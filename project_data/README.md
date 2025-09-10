@@ -1,7 +1,7 @@
 # Yambda Dataset Downloader
 
-This folder contains a Python utility for downloading and saving the [Yandex Yambda dataset](https://huggingface.co/datasets/yandex/yambda) in Parquet format.  
-The scripts allow you to download the dataset, inspect the files, and compute basic statistics. You can select the dataset size (`50m`, `500m`, or `5b`) and save all interaction and metadata files locally.
+This folder contains Python utilities for downloading, inspecting, and analyzing the [Yandex Yambda dataset](https://huggingface.co/datasets/yandex/yambda) in Parquet format.  
+The scripts allow you to download the dataset, inspect the files, and compute basic statistics. The dataset size, type, and save directory are configured via a Python `config.py` file in the parent folder.
 
 ---
 
@@ -11,7 +11,7 @@ The scripts allow you to download the dataset, inspect the files, and compute ba
   - `Yambda_download.py` : script that downloads the Yambda dataset and saves it as Parquet files.
   - `yambda_inspect.py` : script that saves a CSV file containing the column names and the first row of each Parquet file.
   - `yambda_stats.py` : script that saves a CSV file containing basic statistics of each interactions file.
-  - `YambdaData50m/` : folder containing the downloaded Parquet files of the 50m dataset and exploration CSV files.  
+  - `YambdaData50m/` : folder containing the downloaded Parquet files and exploration CSV files.  
     *NOTE:* the Parquet files were not uploaded to this Git repository.
     - `listens.parquet` : user → track interactions where a user listened to a track (without explicit feedback).
     - `likes.parquet` : user → track interactions where a user explicitly "liked" a track.
@@ -27,13 +27,27 @@ The scripts allow you to download the dataset, inspect the files, and compute ba
 
 ---
 
+## Configuration
+
+A `config.py` file in the parent folder sets the dataset parameters and save directory. Example:
+
+```python
+# config.py
+DATASET_SIZE = "50m"       # Options: "50m", "500m", "5b"
+DATASET_TYPE = "flat"       # Options: "flat", "sequential"
+DATA_DIR = f"final_project/project_data/YambdaData{DATASET_SIZE}/"
+```
+
+All scripts (`Yambda_download.py`, `yambda_inspect.py`, `yambda_stats.py`) import this file and use its global variables. You can edit this file to change the dataset parameters or save directory.
+
+---
+
 ## How It Works
 
 1. The scripts use Hugging Face's `datasets` library to download Yambda.
-2. The user specifies:
-   - Dataset **type** (`flat` or `sequential`)  
-   - Dataset **size** (`50m`, `500m`, or `5b`)  
-3. All interaction files and metadata are saved as `.parquet` in the chosen folder (e.g., `YambdaData50m/`).
+2. Parameters like dataset type, size, and save directory are read from `config.py`.
+3. All interaction files and metadata are saved as `.parquet` in the directory specified in the config.
+4. Additional scripts can inspect and generate statistics for the downloaded files.
 
 ---
 
@@ -43,19 +57,10 @@ The scripts allow you to download the dataset, inspect the files, and compute ba
 Downloads the dataset and saves all Parquet files.
 
 ```bash
-# Install dependencies
-pip install datasets pyarrow
-
-# Run the download script
 python Yambda_download.py
 ```
 
-By default, the script downloads the **flat** representation of the Yambda dataset. You can change the dataset size and type by editing the script variables:
-
-```python
-dataset_size = "50m"  # options: "50m", "500m", "5b"
-dataset_type = "flat"  # options: "flat", "sequential"
-```
+> This script uses the global variables defined in `config.py`.
 
 ---
 
@@ -67,7 +72,7 @@ python yambda_inspect.py
 ```
 
 Output:
-- `yambda_columns.csv` in the `YambdaData50m/` folder.
+- `yambda_columns.csv` in the save directory specified in `config.py`.
 
 ---
 
@@ -82,7 +87,7 @@ python yambda_stats.py
 ```
 
 Output:
-- `YambdaStats_50m.csv` in the `YambdaData50m/` folder.
+- `YambdaStats_50m.csv` in the save directory specified in `config.py`.
 
 ---
 
@@ -93,4 +98,5 @@ Output:
   - `50m`: lightweight, easier for experiments
   - `500m`: medium scale
   - `5b`: full dataset, very large and resource-intensive
-- All CSV outputs are generated inside the same folder as the Parquet files.
+- All CSV outputs are generated in the save directory specified in `config.py`.
+

@@ -2,12 +2,12 @@ import pandas as pd
 import os
 import json
 import numpy as np
+from data_preprocessing import DATA_DIR
 
 # ------------------------------
 # Settings
 # ------------------------------
-parquet_folder = "/home/student/project_data/YambdaData50m"  # <-- folder where your parquet files are
-output_csv = "/home/student/project_data/YambdaData50m/yambda_columns.csv"  # <-- output CSV
+output_csv = os.path.join(DATA_DIR, "yambda_columns.csv")  # <-- output CSV
 num_preview_rows = 1  # only the first row
 
 
@@ -29,10 +29,10 @@ def make_json_serializable(d):
 # ------------------------------
 summary_list = []
 
-for file_name in os.listdir(parquet_folder):
+for file_name in os.listdir(DATA_DIR):
     if file_name.endswith(".parquet"):
         print(f"Starting {file_name}")
-        file_path = os.path.join(parquet_folder, file_name)
+        file_path = os.path.join(DATA_DIR, file_name)
         df = pd.read_parquet(file_path)
 
         # Column names

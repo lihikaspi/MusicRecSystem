@@ -2,6 +2,7 @@ import os
 import shutil
 from datasets import Dataset, load_dataset
 from typing import Literal
+from config import DATASET_SIZE, DATASET_TYPE, DATA_DIR
 
 # ----------------------------
 # Wrapper Class for Yambda
@@ -34,26 +35,19 @@ class YambdaDataset:
         return data["train"]
 
 # ----------------------------
-# User configurable variables
-# ----------------------------
-dataset_size = "50m"  # choose "50m", "500m", or "5b"
-dataset_type = "flat"  # options: "flat", "sequential"
-save_dir = os.path.join(os.getcwd(), f"YambdaData{dataset_size}")
-
-# ----------------------------
 # Delete old folder if it exists
 # ----------------------------
-if os.path.exists(save_dir):
-    print(f"Deleting old folder: {save_dir}")
-    shutil.rmtree(save_dir)
+if os.path.exists(DATA_DIR):
+    print(f"Deleting old folder: {DATA_DIR}")
+    shutil.rmtree(DATA_DIR)
 
-os.makedirs(save_dir, exist_ok=True)
-print(f"Created new folder: {save_dir}")
+os.makedirs(DATA_DIR, exist_ok=True)
+print(f"Created new folder: {DATA_DIR}")
 
 # ----------------------------
 # Download datasets
 # ----------------------------
-dataset = YambdaDataset(dataset_type=dataset_type, dataset_size=dataset_size)
+dataset = YambdaDataset(dataset_type=DATASET_TYPE, dataset_size=DATASET_SIZE)
 
 # Interactions
 likes = dataset.interaction("likes")
@@ -84,8 +78,8 @@ datasets_to_save = {
 }
 
 for name, ds in datasets_to_save.items():
-    file_path = os.path.join(save_dir, f"{name}.parquet")
+    file_path = os.path.join(DATA_DIR, f"{name}.parquet")
     print(f"Saving {name} to {file_path} ...")
     ds.to_parquet(file_path)
 
-print(f"✅ All datasets saved to folder: {save_dir}")
+print(f"✅ All datasets saved to folder: {DATA_DIR}")
