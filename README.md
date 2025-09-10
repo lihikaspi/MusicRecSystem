@@ -85,7 +85,7 @@ a `config.py` file sets the save directories and dataset parameters for the down
 ### Stage 1: Downloading the Dataset
 
 The code downloads the Yambda dataset from Hugging Face's `datasets` library. 
-Further information about the download process can be found in the `project_data/README.md` file
+Further information about the download process can be found in the [`project_data/README.md`](project_data/README.md) file
 
 ```bash
 python yambda_download.py
