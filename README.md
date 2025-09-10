@@ -65,6 +65,7 @@ Follow the official guide to install all necessary packages:
   - `split_data.py` : script that splits the `interactions.parquet` file into train/val/test sets
   - `build_graph.py` : script that builds the graphs used for the GNN
 - `processed_data/` : folder containing the processed data files
+  *NOTE!* the parquet files were not uploded to this Git repository
   - `interactions.parquet` : files containing all the interactions with respective weights
   - `train.parquet` : train set
   - `val.parquet` : validation set
