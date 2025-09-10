@@ -37,6 +37,7 @@ class YambdaDataset:
 # User configurable variables
 # ----------------------------
 dataset_size = "50m"  # choose "50m", "500m", or "5b"
+dataset_type = "flat"  # options: "flat", "sequential"
 save_dir = os.path.join(os.getcwd(), f"YambdaData{dataset_size}")
 
 # ----------------------------
@@ -52,7 +53,7 @@ print(f"Created new folder: {save_dir}")
 # ----------------------------
 # Download datasets
 # ----------------------------
-dataset = YambdaDataset(dataset_type="flat", dataset_size=dataset_size)
+dataset = YambdaDataset(dataset_type=dataset_type, dataset_size=dataset_size)
 
 # Interactions
 likes = dataset.interaction("likes")
