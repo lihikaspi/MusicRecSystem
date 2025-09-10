@@ -36,7 +36,7 @@ class YambdaDataset:
 # ----------------------------
 # User configurable variables
 # ----------------------------
-dataset_size = "500m"  # choose "50m", "500m", or "5b"
+dataset_size = "50m"  # choose "50m", "500m", or "5b"
 save_dir = os.path.join(os.getcwd(), f"YambdaData{dataset_size}")
 
 # ----------------------------

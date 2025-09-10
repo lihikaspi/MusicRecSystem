@@ -2,7 +2,7 @@ import os
 import pandas as pd
 import numpy as np
 
-DATA_DIR = "final_project/project_data/YambdaData/50m/"
+DATA_DIR = "final_project/project_data/YambdaData50m/"
 OUTPUT_DIR = "final_project/processed_data/"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
