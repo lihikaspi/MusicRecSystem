@@ -1,5 +1,21 @@
 # Yambda Dataset Downloader
 
+## Table of Contents
+
+1. [Overview](#overview)
+2. [Files Structure](#files-structure)
+3. [Configuration](#configuration)
+4. [How It Works](#how-it-works)
+5. [Usage](#usage)
+   - [1. Download Yambda Dataset](#1-download-yambda-dataset)
+   - [2. Inspect Parquet Files](#2-inspect-parquet-files)
+   - [3. Compute Basic Statistics](#3-compute-basic-statistics)
+6. [Notes](#notes)
+
+--- 
+
+## Overview
+
 This repository contains Python utilities for downloading, inspecting, and analyzing the [Yandex Yambda dataset](https://huggingface.co/datasets/yandex/yambda) in Parquet format.  
 The dataset is downloaded using the script in the repo root, and the scripts in `project_data/` allow you to inspect the files and compute basic statistics.  
 The dataset size, type, and save directory are configured via a Python `config.py` file in the repo root.
