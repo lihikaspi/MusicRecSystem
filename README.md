@@ -38,7 +38,8 @@ More details about the dataset can be found here: [Yandex Yambda dataset](https:
 The files contain:
 - **`multi_event.parquet`:** a unified table including multiple types of interactions (`listen`, `like`, `unlike`, `dislike`, `undislike`). This file may contain `null` values and is not cleaned.
 - **single-event records:** cleaned file for each event type with user-song interactions of that type
-- **song mapping:** song-album mapping and song-artist mapping
+- **audio embeddings:** pre-computed audio embedding
+- **song mappings:** song-album mapping and song-artist mapping
 
 ---
 
@@ -134,7 +135,7 @@ DATA_DIR = f"project_data/YambdaData{DATASET_SIZE}/"
 
 We also offer additional scripts to inspect the downloaded files and compute basic statistics:
 
-#### 1. Inspect:
+#### 1. Inspect
 
 saves a CSV file containing the columns names and first row of each file in the same save directory as the data.
 
