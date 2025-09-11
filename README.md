@@ -145,24 +145,21 @@ DATASET_TYPE = "flat"       # Options: "flat", "sequential"
 DATA_DIR = f"project_data/YambdaData{DATASET_SIZE}/"
 ```
 
-We also offer additional scripts to inspect the downloaded files and compute basic statistics:
+Additional scripts:
 
-#### 1. Inspect
-
-saves a CSV file containing the columns names and first row of each file in the same save directory as the data.
+#### Inspect Columns
+Saves a CSV with column names and the first row of each file:
 
 ```bash
 python project_data/yambda_inspect.py
 ```
 
-#### 2. Basic Statistics
-
-saves a CSV file containing a basic statistics about each interaction file in the same save directory as the data.
+#### Basic Statistics
+Saves a CSV with basic statistics for each interaction file:
 
 ```bash
 python project_data/yambda_stats.py
 ```
-
 
 ### Stage 2: Preparing the Data for the GNN
 
@@ -187,10 +184,10 @@ python run_GNN_prep.py
 #### 3. Build Graph
 
 - Builds a bipartite graph with users and songs as nodes and interactions as weighted edges.
-- Saves the graph as a PyTorch file graph.pt.
+- Saves the graph as a PyTorch file `graph.pt`.
 
 
-All outputs are saved to the directory specified in `config.py` as `PROCESSED_DIR`. Example:
+All outputs are saved to the directory specified in `config.py` as `PROCESSED_DIR`:
 
 ```python
 # config.py
