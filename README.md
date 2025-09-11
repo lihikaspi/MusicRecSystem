@@ -95,16 +95,17 @@ Follow the official guide to install all necessary packages:
 - `yambda_stats.py`
 
 <details>
-<summary><strong>Raw Dataset (YambdaData50m/) - 10 files</strong></summary>
+<summary><strong>Raw Dataset (YambdaData50m/)</strong></summary>
 
-- `listens.parquet` / `likes.parquet` / `dislikes.parquet` / `unlikes.parquet` / `undislikes.parquet`
-- `multi_event.parquet`
-- `embeddings.parquet`
-- `album_mapping.parquet` / `artist_mapping.parquet`
-- `yambda_columns.csv`
-- `YambdaStats_50m.csv`
+  - `listens.parquet` / `likes.parquet` / `dislikes.parquet` / `unlikes.parquet` / `undislikes.parquet`
+  - `multi_event.parquet`
+  - `embeddings.parquet`
+  - `album_mapping.parquet` / `artist_mapping.parquet`
+  - `yambda_columns.csv`
+  - `YambdaStats_50m.csv`
 
-</details>
+  </details>
+
 ---
 
 ## Configuration
