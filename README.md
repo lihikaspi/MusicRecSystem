@@ -86,8 +86,12 @@ Follow the official guide to install all necessary packages:
 - `split_data.py`
 - `build_graph.py`
 
-### GNN modeling (`GNN_model/`)
+### GNN Modeling (`GNN_model/`)
 - `GNN_class.py`
+
+### ANN Search (`ANN_search/`)
+- `ANN_index_recs.py`
+- `ANN_eval.py`
 
 ### Processed Data (`processed_data/`)
 - `interactions.parquet`
@@ -199,6 +203,20 @@ python train_GNN.py
 ```
 
 ### Stage 4: ANN search and retrieval
+
+Run the ANN search and retrieval pipeline:
+
+```bash
+python run_ANN_search.py
+```
+
+#### 1. Build ANN Index and Retrieve the top-k results
+
+
+
+#### 2. Evaluate the results
+
+
 
 ---
 
