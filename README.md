@@ -79,11 +79,15 @@ Follow the official guide to install all necessary packages:
 - `config.py`
 - `yambda_download.py` 
 - `run_GNN_prep.py`
+- `train_GNN.py`
 
 ### Data Processing (`GNN_prep/`)
 - `data_preprocessing.py`
 - `split_data.py`
 - `build_graph.py`
+
+### GNN modeling (`GNN_model/`)
+- `GNN_class.py`
 
 ### Processed Data (`processed_data/`)
 - `interactions.parquet`
@@ -188,6 +192,11 @@ PROCESSED_DIR = "final_project/processed_data/"
 
 ### Stage 3: GNN modelling and training
 
+Run the modeling and training pipeline:
+
+```bash
+python train_GNN.py
+```
 
 ### Stage 4: ANN search and retrieval
 
