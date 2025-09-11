@@ -2,9 +2,10 @@
 DATASET_SIZE = "50m"  # Options: "50m", "500m", "5b"
 DATASET_TYPE = "flat" # options: "flat", "sequential"
 
-# save directories
-DATA_DIR = f"final_project/project_data/YambdaData{DATASET_SIZE}/"
-PROCESSED_DIR = "final_project/processed_data/"
+# Save directories
+DATA_DIR = f"project_data/YambdaData{DATASET_SIZE}/"
+PROCESSED_DIR = "processed_data/"
+RECS_DIR = "recs_eval/"
 
 # Mapping edge type names to integer IDs
 EDGE_TYPE_MAPPING = {
@@ -14,3 +15,6 @@ EDGE_TYPE_MAPPING = {
     "unlike": 3,
     "undislike": 4
 }
+
+# ANN top-k results
+TOP_K = 10
