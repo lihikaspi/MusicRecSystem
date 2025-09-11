@@ -25,6 +25,8 @@
 
 ## Overview
 
+This project implements a music recommendation system using the Yandex Yambda dataset.
+The workflow includes downloading and preprocessing the dataset, constructing a user-song graph, training a GNN, and performing ANN-based recommendation retrieval.
 
 ---
 
