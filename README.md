@@ -39,9 +39,9 @@ More details about the dataset can be found here: [Yandex Yambda dataset](https:
 
 The files contain:
 - **`multi_event.parquet`:** a unified table including multiple types of interactions (`listen`, `like`, `unlike`, `dislike`, `undislike`). This file may contain `null` values and is not cleaned.
-- **single-event records:** cleaned file for each event type with user-song interactions of that type
-- **audio embeddings:** pre-computed audio embedding
-- **song mappings:** song-album mapping and song-artist mapping
+- **single-event records:** cleaned files for each interaction type
+- **audio embeddings:** pre-computed audio embedding per track
+- **song mappings:** song-album and song-artist mappings
 
 ---
 
@@ -49,7 +49,7 @@ The files contain:
 
 Ensure your environment has enough disk space for the dataset size you plan to download (`50m`, `500m`, or `5b`).
 
-Install the required Python packages. For GPU setups:
+Install required Python packages:
 
 ```bash
 pip install numpy pandas torch faiss-gpu typing-extensions scikit-learn
@@ -58,10 +58,10 @@ pip install numpy pandas torch faiss-gpu typing-extensions scikit-learn
 ### Installing PyTorch
 
 For GPU, make sure to install the correct version that matches your CUDA setup.
-Example for CUDA 12.1:
+Example for CUDA 12.8:
 
 ```bash
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
 ```
 
 ### Installing PyTorch Geometric
@@ -104,18 +104,14 @@ Follow the official guide to install all necessary packages:
 ### Project Data (`project_data/`)
 - `yambda_inspect.py`
 - `yambda_stats.py`
+- #### Raw Dataset (`YambdaData50m/`)
+   - `listens.parquet` / `likes.parquet` / `dislikes.parquet` / `unlikes.parquet` / `undislikes.parquet`
+   - `multi_event.parquet`
+   - `embeddings.parquet`
+   - `album_mapping.parquet` / `artist_mapping.parquet`
+   - `yambda_columns.csv`
+   - `YambdaStats_50m.csv`
 
-<details>
-<summary><strong>Raw Dataset (YambdaData50m/)</strong></summary>
-
-  - `listens.parquet` / `likes.parquet` / `dislikes.parquet` / `unlikes.parquet` / `undislikes.parquet`
-  - `multi_event.parquet`
-  - `embeddings.parquet`
-  - `album_mapping.parquet` / `artist_mapping.parquet`
-  - `yambda_columns.csv`
-  - `YambdaStats_50m.csv`
-
-  </details>
 
 ---
 
