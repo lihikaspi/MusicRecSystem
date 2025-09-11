@@ -80,6 +80,7 @@ Follow the official guide to install all necessary packages:
 - `yambda_download.py` 
 - `run_GNN_prep.py`
 - `train_GNN.py`
+- `run_ANN_search.py`
 
 ### Data Processing (`GNN_prep/`)
 - `data_preprocessing.py`
