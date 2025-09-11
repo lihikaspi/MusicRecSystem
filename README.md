@@ -71,39 +71,53 @@ Follow the official guide to install all necessary packages:
 
 ---
 
-## Files Structure
+## File Structure
 
-*NOTE:* the Parquet files were not uploaded to this Git repository.  
+> **Note:** Parquet files were not uploaded to this Git repository.
 
-- `config.py` 
-- `yambda_download.py` 
-- `run_GNN_prep.py` 
-- `GNN_prep/` 
-  - `data_preprocessing.py` 
-  - `split_data.py`
-  - `build_graph.py` 
-- `processed_data/`
-  - `interactions.parquet` 
-  - `train.parquet` 
-  - `val.parquet` 
-  - `test.parquet` 
-  - `graph.pt` 
-- `project_data/` 
-  - `yambda_inspect.py`  
-  - `yambda_stats.py`  
-  - `YambdaData50m/`
-    - `listens.parquet` 
-    - `likes.parquet` 
-    - `dislikes.parquet` 
-    - `unlikes.parquet` 
-    - `undislikes.parquet`  
-    - `multi_event.parquet` 
-    - `embeddings.parquet`   
-    - `album_mapping.parquet` 
-    - `artist_mapping.parquet` 
-    - `yambda_columns.csv`
-    - `YambdaStats_50m.csv` 
+### Core Scripts
+- `config.py` - Configuration settings
+- `yambda_download.py` - Data download utility
+- `run_GNN_prep.py` - Main GNN preparation script
 
+### Data Processing (`GNN_prep/`)
+Contains preprocessing and graph building modules:
+- `data_preprocessing.py` - Raw data preprocessing
+- `split_data.py` - Train/validation/test data splitting
+- `build_graph.py` - Graph structure construction
+
+### Processed Data (`processed_data/`)
+Generated datasets ready for model training:
+- `interactions.parquet` - User-item interaction data
+- `train.parquet` - Training dataset
+- `val.parquet` - Validation dataset  
+- `test.parquet` - Test dataset
+- `graph.pt` - PyTorch graph object
+
+### Project Data (`project_data/`)
+Raw data and analysis tools:
+
+#### Analysis Scripts
+- `yambda_inspect.py` - Data inspection utilities
+- `yambda_stats.py` - Statistical analysis tools
+
+#### Raw Dataset (`YambdaData50m/`)
+Original Yambda dataset containing:
+
+**User Interaction Files:**
+- `listens.parquet` - User listening events
+- `likes.parquet` - User like events
+- `dislikes.parquet` - User dislike events
+- `unlikes.parquet` - User unlike events
+- `undislikes.parquet` - User undislike events
+- `multi_event.parquet` - Combined interaction events
+
+**Metadata Files:**
+- `embeddings.parquet` - Pre-trained embeddings
+- `album_mapping.parquet` - Album ID mappings
+- `artist_mapping.parquet` - Artist ID mappings
+- `yambda_columns.csv` - Column definitions
+- `YambdaStats_50m.csv` - Dataset statistics
 
 ---
 
