@@ -1,6 +1,11 @@
 # Music Recommendation System
+
+A graph-based music recommendation system leveraging GNNs and ANN search for scalable retrieval.
+
 #### Data Analysis and Presentation - Final project
 #### Created By: Lihi Kaspi, Harel Oved & Niv Maman
+
+---
 
 ## Table of Contents
 
@@ -17,8 +22,10 @@
      - [1. Data Preprocessing](#1-data-preprocessing)
      - [2. Split Data](#2-split-data)
      - [3. Build Graph](#3-build-graph)
-   - [Stage 3: GNN Modelling and Training](#stage-3-gnn-modelling-and-training)
+   - [Stage 3: GNN Modeling and Training](#stage-3-gnn-modeling-and-training)
    - [Stage 4: ANN Search and Retrieval](#stage-4-ann-search-and-retrieval)
+     - [1. ANN Indexing and Retrieval](#1-ann-indexing-and-retrieval)
+     - [2. Retrieval Evaluation](#2-retrieval-evaluation)
 7. [Notes](#notes)
 
 ---
@@ -48,8 +55,12 @@ The files contain:
 ## Setup and Requirements:
 
 Ensure your environment has enough disk space for the dataset size you plan to download (`50m`, `500m`, or `5b`).
+The 50m datset takes approximately 18GB.
 
+GPU strongly recommended for training and ANN indexing. CPU-only runs may be very slow.    
 Install required Python packages:
+
+> Python version used: Python 3.10+
 
 ```bash
 pip install numpy pandas torch faiss-gpu typing-extensions scikit-learn
@@ -66,9 +77,17 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 
 ### Installing PyTorch Geometric
 
+> version must match PyTorch
+
+```bash
+pip install torch-scatter torch-sparse torch-geometric
+```
+
 PyTorch Geometric requires additional dependencies that must match your PyTorch and CUDA versions.
 Follow the official guide to install all necessary packages:
 [pytorch-geometric installation instructions](https://pytorch-geometric.readthedocs.io/en/latest/notes/installation.html)
+
+
 
 
 ---
@@ -190,7 +209,7 @@ All outputs are saved to the directory specified in `config.py` as `PROCESSED_DI
 PROCESSED_DIR = "final_project/processed_data/"
 ```
 
-### Stage 3: GNN modelling and training
+### Stage 3: GNN modeling and training
 
 Run the modeling and training pipeline:
 
@@ -206,11 +225,11 @@ Run the ANN search and retrieval pipeline:
 python run_ANN_search.py
 ```
 
-#### 1. Build ANN Index and Retrieve the top-k results
+#### 1. ANN Indexing and Retrieval
 
 
 
-#### 2. Evaluate the results
+#### 2. Retrieval Evaluation
 
 
 
