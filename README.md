@@ -12,8 +12,6 @@ Created By: Lihi Kaspi, Harel Oved & Niv Maman
 1. [Overview](#overview)
 2. [The Yandex Yambda Dataset](#the-yandex-yambda-dataset)
 3. [Setup and Requirements](#setup-and-requirements)
-   - [Installing PyTorch](#installing-pytorch)
-   - [Installing PyTorch Geometric](#installing-pytorch-geometric)
 4. [File Structure](#file-structure)
 5. [Configuration](#configuration)
 6. [Project Pipeline](#project-pipeline)
@@ -51,31 +49,6 @@ The files contain:
 - **song mappings:** song-album and song-artist mappings
 
 ---
-
-## Setup and Requirements:
-
-Ensure your environment has enough disk space for the dataset size you plan to download (`50m`, `500m`, or `5b`).
-The 50m datset takes approximately 18GB.
-
-GPU strongly recommended for training and ANN indexing. CPU-only runs may be very slow.    
-Install required Python packages:
-
-> Python version used: Python 3.10+
-
-```bash
-pip install -r requirements.txt
-
-pip install numpy pandas torch faiss-gpu typing-extensions scikit-learn
-```
-
-### Installing PyTorch
-
-For GPU, make sure to install the correct version that matches your CUDA setup.
-Example for CUDA 12.8:
-
-```bash
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
-```
 
 ## Setup and Requirements
 
