@@ -18,3 +18,11 @@ EDGE_TYPE_MAPPING = {
 
 # ANN top-k results
 TOP_K = 10
+
+# Ordered pipeline (name → file)
+stage_files = [
+    ("download", "download_yambda.py"),
+    ("gnn_prep", "run_GNN_prep.py"),
+    ("train_gnn", "train_GNN.py"),
+    ("ann_search", "run_ANN_search.py"),
+]
