@@ -4,6 +4,7 @@ from GNN_prep.build_graph import main as build_graph
 import os
 from config import PROCESSED_DIR
 
+
 def main():
     interactions_dir = os.path.join(PROCESSED_DIR, "interactions.parquet")
     train_dir = os.path.join(PROCESSED_DIR, "train.parquet")
@@ -33,6 +34,7 @@ def main():
         print("graph exists. Skipping graph building.")
 
     print("all files exists! ready for the GNN training")
+
 
 if __name__ == "__main__":
     main()

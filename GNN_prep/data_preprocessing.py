@@ -2,6 +2,7 @@ import os
 import pandas as pd
 from config import DATA_DIR, PROCESSED_DIR
 
+
 def main():
     os.makedirs(PROCESSED_DIR, exist_ok=True)
 
@@ -79,6 +80,7 @@ def main():
 
     print(f"Saved {len(interactions)} interactions")
     print(f"Users: {len(user2idx)}, Items: {len(item2idx)}")
+
 
 if __name__ == "__main__":
     main()
