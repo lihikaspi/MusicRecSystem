@@ -2,7 +2,7 @@
 
 A graph-based music recommendation system leveraging GNNs and ANN search for scalable retrieval.
 
-Data Analysis and Presentation - Final project
+Data Analysis and Presentation - Final project     
 Created By: Lihi Kaspi, Harel Oved & Niv Maman
 
 ---
