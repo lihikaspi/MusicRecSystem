@@ -63,6 +63,8 @@ Install required Python packages:
 > Python version used: Python 3.10+
 
 ```bash
+pip install -r requirements.txt
+
 pip install numpy pandas torch faiss-gpu typing-extensions scikit-learn
 ```
 
@@ -75,20 +77,63 @@ Example for CUDA 12.8:
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
 ```
 
-### Installing PyTorch Geometric
+## Setup and Requirements
 
-> version must match PyTorch
+Ensure your environment has enough disk space for the dataset size you plan to download (`50m`, `500m`, or `5b`).
+The 50m dataset takes approximately 18GB.
+
+**GPU Required**: This project requires a CUDA-compatible GPU for GNN training and ANN indexing. CPU-only runs are not supported.
+
+> Python version: Python 3.10+
+
+Install required Python packages:
 
 ```bash
-pip install torch-scatter torch-sparse torch-geometric
+pip install -r requirements.txt
 ```
 
-PyTorch Geometric requires additional dependencies that must match your PyTorch and CUDA versions.
-Follow the official guide to install all necessary packages:
+### Installing PyTorch
+
+The requirements.txt includes PyTorch with CUDA 11.8 support by default. For other CUDA versions, modify the PyTorch versions in `requirements.txt`:
+
+- **CUDA 12.1**: Change `+cu118` to `+cu121` 
+- **CUDA 12.8**: Change `+cu118` to `+cu128`
+
+Check your CUDA version:
+
+```bash
+nvidia-smi
+```
+
+Example for manual CUDA 12.8 installation:
+
+```bash
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+```
+
+### Installing PyTorch Geometric
+
+> Version must match PyTorch
+
+PyTorch Geometric is included in requirements.txt with the necessary dependencies:
+- `torch-geometric>=2.3.0`
+- `torch-scatter>=2.1.0` 
+- `torch-sparse>=0.6.17`
+
+For additional installation guidance, follow the official guide:
 [pytorch-geometric installation instructions](https://pytorch-geometric.readthedocs.io/en/latest/notes/installation.html)
 
+### Verify Installation
 
+Test your setup:
 
+```python
+import torch
+print(f"CUDA available: {torch.cuda.is_available()}")
+
+import torch_geometric
+print(f"PyG version: {torch_geometric.__version__}")
+```
 
 ---
 
@@ -98,10 +143,12 @@ Follow the official guide to install all necessary packages:
 
 ### Core Scripts
 - `config.py`
+- `run_all.py`
 - `yambda_download.py` 
 - `run_GNN_prep.py`
 - `train_GNN.py`
 - `run_ANN_search.py`
+- `requirements.txt`
 
 ### Data Processing (`GNN_prep/`)
 - `data_preprocessing.py`
@@ -136,11 +183,40 @@ Follow the official guide to install all necessary packages:
 
 ## Configuration
 
-a `config.py` file sets the save directories and dataset parameters for the download
+The `config.py` file sets the save directories, dataset parameters, number of retrieved ANN results, and also defines the pipeline stages
 
 ---
 
 ## Project Pipeline
+
+You can run the entire project or individual stages via the top-level runner `run_all.py` (recommended):
+
+```bash
+# Run all stages in order
+python run_all.py
+
+# Run a specific stage by number (1–4)
+python run_all.py --stage 3
+
+# Run a specific stage by name
+python run_all.py --stage train_gnn
+```
+
+The stages correspond to the scripts defined in `config.py`:
+
+1. `download` → `download_yambda.py`
+2. `gnn_prep` → `run_GNN_prep.py`
+3. `train_gnn` → `train_GNN.py`
+4. `ann_search` → `run_ANN_search.py`
+
+Optionally, for development or debugging, you can also run individual stage scripts directly:
+
+```bash
+python download_yambda.py
+python run_GNN_prep.py
+python train_GNN.py
+python run_ANN_search.py
+```
 
 ### Stage 1: Downloading the Dataset
 
@@ -148,6 +224,10 @@ The code downloads the Yambda dataset from Hugging Face's `datasets` library usi
 All the interaction files and metadata available in this dataset are saved in parquet format.
 
 ```bash
+# via the top-level runner (recommended)
+python run_all.py --stage download
+
+# directly
 python yambda_download.py
 ```
 
@@ -178,9 +258,13 @@ python project_data/yambda_stats.py
 
 ### Stage 2: Preparing the Data for the GNN
 
-Run the preparation pipeline:
+Run the GNN preparation pipeline:
 
 ```bash
+# via the top-level runner (recommended)
+python run_all.py --stage gnn_prep
+
+# directly
 python run_GNN_prep.py
 ```
 
@@ -211,9 +295,13 @@ PROCESSED_DIR = "final_project/processed_data/"
 
 ### Stage 3: GNN modeling and training
 
-Run the modeling and training pipeline:
+Run the GNN training pipeline:
 
 ```bash
+# via the top-level runner (recommended)
+python run_all.py --stage train_gnn
+
+# directly
 python train_GNN.py
 ```
 
@@ -222,6 +310,10 @@ python train_GNN.py
 Run the ANN search and retrieval pipeline:
 
 ```bash
+# via the top-level runner (recommended)
+python run_all.py --stage ann_search
+
+# directly
 python run_ANN_search.py
 ```
 
