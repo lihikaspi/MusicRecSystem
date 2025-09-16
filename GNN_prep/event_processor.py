@@ -1,6 +1,7 @@
 import os
 import duckdb
-from config import PROCESSED_LISTENS_FILE, WEIGHTS, RAW_LISTENS_FILE, RAW_LIKES_FILE, RAW_DISLIKES_FILE, RAW_UNLIKES_FILE, RAW_UNDISLIKES_FILE
+from config import (PROCESSED_LISTENS_FILE, WEIGHTS, RAW_LISTENS_FILE, RAW_LIKES_FILE, RAW_DISLIKES_FILE, RAW_UNLIKES_FILE, RAW_UNDISLIKES_FILE,
+                    TRAIN_RATIO, VAL_RATIO, TEST_RATIO, PROCESSED_DIR, TRAIN_FILE, VAL_FILE, TEST_FILE)
 
 class EventProcessor:
     def __init__(self, con: duckdb.DuckDBPyConnection, embeddings_path):
@@ -45,15 +46,70 @@ class EventProcessor:
     def create_union_tables(self):
         query = """
         CREATE TEMPORARY TABLE interactions AS
-        SELECT uid, item_id, timestamp, 'listen' AS event_type FROM read_parquet('{RAW_LISTENS_FILE}')
+        SELECT uid, item_id, timestamp, 'listen' AS event_type FROM listens
         UNION ALL
-        SELECT uid, item_id, timestamp, 'like' AS event_type FROM read_parquet('{RAW_LIKES_FILE}')
+        SELECT uid, item_id, timestamp, 'like' AS event_type FROM likes
         UNION ALL
-        SELECT uid, item_id, timestamp, 'dislike' AS event_type FROM read_parquet('{RAW_DISLIKES_FILE}')
+        SELECT uid, item_id, timestamp, 'dislike' AS event_type FROM dislikes
         UNION ALL
-        SELECT uid, item_id, timestamp, 'unlike' AS event_type FROM read_parquet('{RAW_UNLIKES_FILE}')
+        SELECT uid, item_id, timestamp, 'unlike' AS event_type FROM unlikes
         UNION ALL
-        SELECT uid, item_id, timestamp, 'undislike' AS event_type FROM read_parquet('{RAW_UNDISLIKES_FILE}')
+        SELECT uid, item_id, timestamp, 'undislike' AS event_type FROM undislikes
         """
         self.con.execute(query)
+        print("Union table 'interactions' created.")
+
+    def split_data(self):
+        query ="""
+        CREATE TEMPORARY TABLE interactions_split AS
+        WITH ordered AS (
+            SELECT
+                user_id,
+                song_id,
+                timestamp,
+                interaction_type,
+                ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY timestamp) AS rn,
+                COUNT(*) OVER (PARTITION BY user_id) AS total_events
+            FROM interactions
+        )
+        SELECT
+            user_id,
+            song_id,
+            timestamp,
+            interaction_type,
+            CASE
+                WHEN rn <= {TRAIN_RATIO} * total_events THEN 'train'
+                ELSE 'test'
+            END AS split
+        FROM ordered
+        ORDER BY user_id, timestamp;
+        """
+
+        self.con.execute(query)
+
+        # create train, test dbs
+        query = """
+        CREATE TEMPORARY TABLE train AS
+        SELECT * FROM interactions_split WHERE split='train'
+        """
+        self.con.execute(query)
+        query = """
+        CREATE TEMPORARY TABLE test AS
+        SELECT * FROM interactions_split WHERE split='test'
+        """
+        self.con.execute(query)
+
+        print("Data split into train and test sets in 'interactions_split' table.")
+
+        # Save to parquet files
+        self.con.execute(f"COPY (SELECT * FROM interactions_split WHERE split='train') TO '{TRAIN_FILE}' (FORMAT PARQUET)")
+        print(f"Train data saved to {TRAIN_FILE}")
+        self.con.execute(f"COPY (SELECT * FROM interactions_split WHERE split='test') TO '{TEST_FILE}' (FORMAT PARQUET)")
+        print(f"Test data saved to {TEST_FILE}")
+        # Note: VAL_RATIO is set to 0.0, so no validation set is created.
+
+
+
+
+
             

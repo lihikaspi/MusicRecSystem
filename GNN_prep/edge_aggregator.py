@@ -1,5 +1,5 @@
 import duckdb
-from config import WEIGHTS, EDGE_TYPE_MAPPING
+from ..config import WEIGHTS, EDGE_TYPE_MAPPING
 
 class EdgeAggregator:
     def __init__(self, con: duckdb.DuckDBPyConnection):

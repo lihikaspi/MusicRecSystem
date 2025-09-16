@@ -1,5 +1,5 @@
 import duckdb
-from config import (
+from ..config import (
     RAW_DATA_FILES,
     RAW_MULTI_EVENT_FILE,
     EMBEDDINGS_FILE,
@@ -20,6 +20,11 @@ def main():
 
     # Step 2: Filter all single-event files
     processor.filter_all_events(RAW_DATA_FILES)
+
+    # Step 2.5: Create union table
+    processor.create_union_tables()
+
+    processor.split_data()
 
     # Step 3: Aggregate edges
     aggregator = EdgeAggregator(con)
