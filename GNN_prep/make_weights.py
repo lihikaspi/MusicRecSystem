@@ -95,6 +95,7 @@ def build_aggregates(ydir: Path) -> pd.DataFrame:
 
     return df
 
+
 def compute_weights(df: pd.DataFrame,
                     a=1.0, b=0.8, c=0.4,
                     like_bonus=1.5, dislike_pen=2.0,
