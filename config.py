@@ -80,6 +80,15 @@ WEIGHTS = {
     "undislikes.parquet": -1.0
 }
 
+# list of event types and their opposites
+EVENT_TYPES = [
+    {"table": "listens", "opposite": None},
+    {"table": "likes", "opposite": "unlikes"},
+    {"table": "unlikes", "opposite": None},
+    {"table": "dislikes", "opposite": "undislikes"},
+    {"table": "undislikes", "opposite": None},
+]
+
 # -------------------
 # GNN HYPERPARAMETERS
 # -------------------
