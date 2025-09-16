@@ -2,7 +2,7 @@
 import subprocess
 import argparse
 import sys
-from config import stage_files 
+from config import STAGE_FILES
 
 def run_stage(stage_name, stage_file):
     print(f"\n>>> Running stage: {stage_name} ({stage_file}) ...")
@@ -21,16 +21,16 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    stage_dict = {name: file for name, file in stage_files}
+    stage_dict = {name: file for name, file in STAGE_FILES}
 
     if args.stage:
         stage_arg = args.stage.lower()
 
         if stage_arg.isdigit():
             idx = int(stage_arg) - 1
-            if idx < 0 or idx >= len(stage_files):
+            if idx < 0 or idx >= len(STAGE_FILES):
                 sys.exit(f"❌ Invalid stage number: {stage_arg}")
-            stage_name, stage_file = stage_files[idx]
+            stage_name, stage_file = STAGE_FILES[idx]
             run_stage(stage_name, stage_file)
 
         elif stage_arg in stage_dict:
@@ -38,10 +38,10 @@ if __name__ == "__main__":
 
         else:
             sys.exit(f"❌ Invalid stage: {args.stage}. "
-                     f"Choose from {list(stage_dict.keys())} or 1–{len(stage_files)}.")
+                     f"Choose from {list(stage_dict.keys())} or 1–{len(STAGE_FILES)}.")
 
     else:
-        for name, file in stage_files:
+        for name, file in STAGE_FILES:
             run_stage(name, file)
 
         print("✅ Pipeline finished successfully!")

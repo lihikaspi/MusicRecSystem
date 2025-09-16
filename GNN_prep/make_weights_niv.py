@@ -3,6 +3,7 @@ from pathlib import Path
 import numpy as np
 import duckdb
 import pandas as pd
+
 def build_aggregates(ydir: Path) -> pd.DataFrame:
     con = duckdb.connect()
     con.execute(f"PRAGMA threads={os.cpu_count() or 8}")

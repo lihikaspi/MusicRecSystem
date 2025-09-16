@@ -2,10 +2,61 @@
 DATASET_SIZE = "50m"  # Options: "50m", "500m", "5b"
 DATASET_TYPE = "flat" # options: "flat", "sequential"
 
+# --------
+# PIPELINE
+# --------
+
+# Ordered pipeline (name → file)
+STAGE_FILES = [
+    ("download", "download_yambda.py"),
+    ("gnn_prep", "run_GNN_prep.py"),
+    ("train_gnn", "train_GNN.py"),
+    ("ann_search", "run_ANN_search.py"),
+]
+
+# ---------------------
+# PATHS AND DIRECTORIES
+# ---------------------
+
 # Save directories
 DATA_DIR = f"project_data/YambdaData{DATASET_SIZE}/"
 PROCESSED_DIR = "processed_data/"
-RECS_DIR = "recs_eval/"
+RECS_DIR = "recs/"
+
+# Raw interaction files
+RAW_LISTENS_FILE = f"{DATA_DIR}/listens.parquet"
+RAW_LIKES_FILE = f"{DATA_DIR}/likes.parquet"
+RAW_DISLIKES_FILE = f"{DATA_DIR}/dislikes.parquet"
+RAW_UNLIKES_FILE = f"{DATA_DIR}/unlikes.parquet"
+RAW_UNDISLIKES_FILE = f"{DATA_DIR}/undislikes.parquet"
+RAW_MULTI_EVENT_FILE = f"{DATA_DIR}/multi_event.parquet"
+
+# Raw embeddings
+EMBEDDINGS_FILE = f"{DATA_DIR}/embeddings.parquet"
+
+# Mappings
+ALBUM_MAPPING_FILE = f"{DATA_DIR}/album_mapping.parquet"
+ARTIST_MAPPING_FILE = f"{DATA_DIR}/artist_mapping.parquet"
+
+# Processed files
+PROCESSED_INTERACTIONS_FILE = f"{PROCESSED_DIR}/interactions.parquet"
+PROCESSED_TRAIN_FILE = f"{PROCESSED_DIR}/train.parquet"
+PROCESSED_VAL_FILE = f"{PROCESSED_DIR}/val.parquet"
+PROCESSED_TEST_FILE = f"{PROCESSED_DIR}/test.parquet"
+PROCESSED_GRAPH_FILE = f"{PROCESSED_DIR}/graph.pt"
+
+# List of single-event files
+RAW_DATA_FILES = [
+    RAW_LISTENS_FILE,
+    RAW_LIKES_FILE,
+    RAW_DISLIKES_FILE,
+    RAW_UNLIKES_FILE,
+    RAW_UNDISLIKES_FILE
+]
+
+# ------------------
+# DATA PREPROCESSING
+# ------------------
 
 # Mapping edge type names to integer IDs
 EDGE_TYPE_MAPPING = {
@@ -16,13 +67,35 @@ EDGE_TYPE_MAPPING = {
     "undislike": 4
 }
 
+# user interaction threshold
+INTERACTION_THRESHOLD = 5
+
+# event type Weights
+WEIGHTS = {
+    "listens.parquet": 1.0,
+    "likes.parquet": 3.0,
+    "dislikes.parquet": -1.0,
+    "unlikes.parquet": -2.0,
+    "undislikes.parquet": -1.5
+}
+
+# -------------------
+# GNN HYPERPARAMETERS
+# -------------------
+
+
+
+# -------------------
+# ANN HYPERPARAMETERS
+# -------------------
+
 # ANN top-k results
 TOP_K = 10
 
-# Ordered pipeline (name → file)
-stage_files = [
-    ("download", "download_yambda.py"),
-    ("gnn_prep", "run_GNN_prep.py"),
-    ("train_gnn", "train_GNN.py"),
-    ("ann_search", "run_ANN_search.py"),
-]
+
+
+
+
+
+
+
