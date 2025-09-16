@@ -23,6 +23,7 @@ def main():
 
     # Step 2.5: Create union table
     processor.create_union_tables()
+    processor.add_multi_event_table()
 
     processor.split_data()
 

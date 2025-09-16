@@ -1,7 +1,7 @@
 import os
 import duckdb
-from config import (PROCESSED_LISTENS_FILE, WEIGHTS, RAW_LISTENS_FILE, RAW_LIKES_FILE, RAW_DISLIKES_FILE, RAW_UNLIKES_FILE, RAW_UNDISLIKES_FILE,
-                    TRAIN_RATIO, VAL_RATIO, TEST_RATIO, PROCESSED_DIR, TRAIN_FILE, VAL_FILE, TEST_FILE)
+from ..config import (PROCESSED_LISTENS_FILE, WEIGHTS, RAW_LISTENS_FILE, RAW_LIKES_FILE, RAW_DISLIKES_FILE, RAW_UNLIKES_FILE, RAW_UNDISLIKES_FILE,
+                      RAW_MULTI_EVENT_FILE, TRAIN_RATIO, VAL_RATIO, TEST_RATIO, PROCESSED_DIR, TRAIN_FILE, VAL_FILE, TEST_FILE)
 
 class EventProcessor:
     def __init__(self, con: duckdb.DuckDBPyConnection, embeddings_path):
@@ -58,6 +58,15 @@ class EventProcessor:
         """
         self.con.execute(query)
         print("Union table 'interactions' created.")
+
+    def add_multi_event_table(self):
+        query = f"""
+        CREATE TEMPORARY TABLE multi_interactions
+        SELECT *
+        FROM read_parquet('{RAW_MULTI_EVENT_FILE}')
+        """
+        self.con.execute(query)
+        print("Multi-event data added to 'interactions' table.")
 
     def split_data(self):
         query ="""
