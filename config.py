@@ -39,11 +39,12 @@ ALBUM_MAPPING_FILE = f"{DATA_DIR}/album_mapping.parquet"
 ARTIST_MAPPING_FILE = f"{DATA_DIR}/artist_mapping.parquet"
 
 # Processed files
-PROCESSED_INTERACTIONS_FILE = f"{PROCESSED_DIR}/interactions.parquet"
-PROCESSED_TRAIN_FILE = f"{PROCESSED_DIR}/train.parquet"
-PROCESSED_VAL_FILE = f"{PROCESSED_DIR}/val.parquet"
-PROCESSED_TEST_FILE = f"{PROCESSED_DIR}/test.parquet"
-PROCESSED_GRAPH_FILE = f"{PROCESSED_DIR}/graph.pt"
+PROCESSED_LISTENS_FILE = f"{PROCESSED_DIR}/listens.parquet"
+INTERACTIONS_FILE = f"{PROCESSED_DIR}/interactions.parquet"
+TRAIN_FILE = f"{PROCESSED_DIR}/train.parquet"
+VAL_FILE = f"{PROCESSED_DIR}/val.parquet"
+TEST_FILE = f"{PROCESSED_DIR}/test.parquet"
+GRAPH_FILE = f"{PROCESSED_DIR}/graph.pt"
 
 # List of single-event files
 RAW_DATA_FILES = [

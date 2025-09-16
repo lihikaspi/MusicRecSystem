@@ -3,7 +3,7 @@ import torch
 import pandas as pd
 import numpy as np
 from torch_geometric.data import HeteroData
-from MusicRecSystem.config import PROCESSED_DIR, EDGE_TYPE_MAPPING
+from config import PROCESSED_DIR, EDGE_TYPE_MAPPING
 
 def main():
     os.makedirs(PROCESSED_DIR, exist_ok=True)
