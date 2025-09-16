@@ -1,6 +1,6 @@
 import os
 import duckdb
-from config import PROCESSED_LISTENS_FILE, WEIGHTS
+from config import PROCESSED_LISTENS_FILE, WEIGHTS, RAW_LISTENS_FILE, RAW_LIKES_FILE, RAW_DISLIKES_FILE, RAW_UNLIKES_FILE, RAW_UNDISLIKES_FILE
 
 class EventProcessor:
     def __init__(self, con: duckdb.DuckDBPyConnection, embeddings_path):
@@ -41,3 +41,19 @@ class EventProcessor:
         for file_path in raw_files:
             save_listens = os.path.basename(file_path) == "listens.parquet"
             self.filter_single_event_file(file_path, save_listens=save_listens)
+
+    def create_union_tables(self):
+        query = """
+        CREATE TEMPORARY TABLE interactions AS
+        SELECT uid, item_id, timestamp, 'listen' AS event_type FROM read_parquet('{RAW_LISTENS_FILE}')
+        UNION ALL
+        SELECT uid, item_id, timestamp, 'like' AS event_type FROM read_parquet('{RAW_LIKES_FILE}')
+        UNION ALL
+        SELECT uid, item_id, timestamp, 'dislike' AS event_type FROM read_parquet('{RAW_DISLIKES_FILE}')
+        UNION ALL
+        SELECT uid, item_id, timestamp, 'unlike' AS event_type FROM read_parquet('{RAW_UNLIKES_FILE}')
+        UNION ALL
+        SELECT uid, item_id, timestamp, 'undislike' AS event_type FROM read_parquet('{RAW_UNDISLIKES_FILE}')
+        """
+        self.con.execute(query)
+            

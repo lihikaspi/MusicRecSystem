@@ -89,6 +89,11 @@ EVENT_TYPES = [
     {"table": "undislikes", "opposite": None},
 ]
 
+# Train/val/test split ratios
+TRAIN_RATIO = 0.8
+VAL_RATIO = 0.0
+TEST_RATIO = 0.2
+
 # -------------------
 # GNN HYPERPARAMETERS
 # -------------------
