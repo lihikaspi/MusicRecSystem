@@ -75,9 +75,9 @@ INTERACTION_THRESHOLD = 5
 WEIGHTS = {
     "listens.parquet": 1.0,
     "likes.parquet": 3.0,
-    "dislikes.parquet": -1.0,
-    "unlikes.parquet": -2.0,
-    "undislikes.parquet": -1.5
+    "dislikes.parquet": -3.0,
+    "unlikes.parquet": -1.0,
+    "undislikes.parquet": -1.0
 }
 
 # -------------------
