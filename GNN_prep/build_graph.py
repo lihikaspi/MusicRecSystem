@@ -4,16 +4,25 @@ from torch_geometric.data import HeteroData
 import numpy as np
 
 class GraphBuilder:
-    def __init__(self, con: duckdb.DuckDBPyConnection, edges_file):
+    """
+    Class to construct the graph used for the GNN model
+    """
+    def __init__(self, con: duckdb.DuckDBPyConnection):
+        """
+        Args:
+            con: DuckDB connection
+        """
         self.con = con
-        self.edges_file = edges_file
 
 
-    def build_graph(self):
+    def _build_graph(self):
+        """
+        Builds the graph using the edges file
+        """
         # Query all edges from the existing temporary table
         query = """
                 SELECT user_idx, item_idx, edge_count, edge_avg_played_ratio, edge_weight, edge_type
-                FROM agg_edges_categorical
+                FROM agg_edges_event_type
                 """
 
         edges_df = self.con.execute(query).fetch_df()
@@ -36,7 +45,7 @@ class GraphBuilder:
         # Item node features: only normalized embedding
         item_embeddings_df = self.con.execute("""
                                               SELECT item_idx, item_normalized_embed, artist_idx, album_idx
-                                              FROM agg_edges_categorical
+                                              FROM agg_edges_event_type
                                               GROUP BY item_idx, item_normalized_embed, artist_idx, album_idx
                                               """).fetch_df()
 
@@ -54,6 +63,14 @@ class GraphBuilder:
         return data
 
     def save_graph(self, output_path):
-        data = self.build_graph()
+        """
+        runs the graph construction pipeline:
+            1. build the graph
+            2. save the graph
+
+        Args:
+            output_path: path to save the graph
+        """
+        data = self._build_graph()
         torch.save(data, output_path)
         print(f"Graph saved to {output_path}")

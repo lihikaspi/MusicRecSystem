@@ -1,8 +1,21 @@
 import duckdb
 
 class EdgeAssembler:
-    def __init__(self, con: duckdb.DuckDBPyConnection, events_path, weights: dict, embeddings_path,
-                 album_mapping_path, artist_mapping_path, event_type_mapping):
+    """
+    Class to assemble the data for the graph construction
+    """
+    def __init__(self, con: duckdb.DuckDBPyConnection, events_path: str, weights: dict, embeddings_path: str,
+                 album_mapping_path: str, artist_mapping_path: str, event_type_mapping: dict):
+        """
+        Args:
+            con: DuckDB connection
+            events_path: Path to the multi-events file
+            weights: Dictionary of edge-type weights
+            embeddings_path: Path to the embeddings file
+            album_mapping_path: Path to the song-album mapping file
+            artist_mapping_path: Path to the song-artist mapping file
+            event_type_mapping: map of event names to categories
+        """
         self.con = con
         self.events_path = events_path
         self.weights = weights
@@ -12,7 +25,11 @@ class EdgeAssembler:
         self.event_type_mapping = event_type_mapping
 
 
-    def aggregate_edges(self):
+    def _aggregate_edges(self):
+        """
+        Aggregates the interactions by user-song-event, adding interactions counter and the average played ratio for 'listen' events.
+        Creates a temporary table 'agg_edges' in the DuckDB memory.
+        """
         case_expr = "CASE e.event_type\n"
         for etype, weight in self.weights.items():
             case_expr += f"    WHEN '{etype}' THEN {weight}\n"
@@ -37,9 +54,13 @@ class EdgeAssembler:
         print("Temporary table 'agg_edges' created.")
 
 
-    def add_song_metadata(self):
+    def _add_song_metadata(self):
+        """
+        Adds album and artist info to the aggregated edges table
+        Creates a temporary table 'agg_edges_artist_album' in the DuckDB memory.
+        """
         query = f"""
-            CREATE TEMPORARY TABLE agg_edges_full AS
+            CREATE TEMPORARY TABLE agg_edges_artist_album AS
             WITH 
                 -- Encode artists
                 artist_index AS (
@@ -76,10 +97,14 @@ class EdgeAssembler:
                 ON ae.item_idx = al.item_id
         """
         self.con.execute(query)
-        print("Temporary table 'agg_edges_full' created.")
+        print("Temporary table 'agg_edges_artist_album' created.")
 
 
-    def add_event_type_cat(self):
+    def _add_event_type_cat(self):
+        """
+        Adds event types (int) to the aggregated edges table
+        Creates a temporary table 'agg_edges_event_type' in the DuckDB memory.
+        """
         case_event_type = "CASE e.event_type\n"
         for etype, cat in self.event_type_mapping.items():
             case_event_type += f"    WHEN '{etype}' THEN {cat}\n"
@@ -87,22 +112,31 @@ class EdgeAssembler:
 
         # Query
         query = f"""
-            CREATE TEMPORARY TABLE agg_edges_categorical AS
+            CREATE TEMPORARY TABLE agg_edges_event_type AS
             SELECT e.*, {case_event_type}
-            FROM agg_edges_full e
+            FROM agg_edges_artist_album e
         """
         self.con.execute(query)
-        print("Temporary table 'agg_edges_categorical' created.")
+        print("Temporary table 'agg_edges_event_type' created.")
 
 
-    def assemble_edges(self, output_path):
-        self.aggregate_edges()
-        self.add_song_metadata()
-        self.add_event_type_cat()
+    def assemble_edges(self, output_path: str = None):
+        """
+        Runs the edge assembler pipeline:
+            1. aggregate the edges
+            2. add artist and album info
+            3. add numeric event type
 
-        # self.con.execute(f"COPY (SELECT * FROM agg_edges_categorical) TO '{output_path}' (FORMAT PARQUET)")
-        # print(f"Edge data saved to {output_path}")
+        Add an output path to save the filtered file.
 
+        Args:
+            output_path: path to output file, default: None
+        """
+        self._aggregate_edges()
+        self._add_song_metadata()
+        self._add_event_type_cat()
 
-
+        if output_path is None:
+            self.con.execute(f"COPY (SELECT * FROM agg_edges_event_type) TO '{output_path}' (FORMAT PARQUET)")
+            print(f"Edge data saved to {output_path}")
 

@@ -5,9 +5,7 @@ from config import DATASET_SIZE, DATASET_TYPE, DATA_DIR, DOWNLOAD_FULL_DATASET
 
 
 def main():
-    # ----------------------------
     # Delete old folder if it exists
-    # ----------------------------
     if os.path.exists(DATA_DIR):
         print(f"Deleting old folder: {DATA_DIR}")
         shutil.rmtree(DATA_DIR)
@@ -15,9 +13,7 @@ def main():
     os.makedirs(DATA_DIR, exist_ok=True)
     print(f"Created new folder: {DATA_DIR}")
 
-    # ----------------------------
     # Download datasets
-    # ----------------------------
     dataset = YambdaDataset(dataset_type=DATASET_TYPE, dataset_size=DATASET_SIZE)
 
     datasets_to_save = {}
@@ -30,14 +26,12 @@ def main():
         # Only download multi_event
         datasets_to_save["multi_event"] = dataset.interaction("multi_event")
 
-    # Metadata + embeddings + mappings (always download)
+    # embeddings + mappings (always download)
     datasets_to_save["embeddings"] = dataset.audio_embeddings()
     datasets_to_save["album_mapping"] = dataset.album_item_mapping()
     datasets_to_save["artist_mapping"] = dataset.artist_item_mapping()
 
-    # ----------------------------
     # Save all datasets to disk
-    # ----------------------------
     for name, ds in datasets_to_save.items():
         file_path = os.path.join(DATA_DIR, f"{name}.parquet")
         print(f"Saving {name} to {file_path} ...")
