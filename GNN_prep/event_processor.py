@@ -43,7 +43,7 @@ class EventProcessor:
                 FROM (SELECT DISTINCT uid FROM filtered_events)
             ),
             song_index AS (
-                SELECT item_id, ROW_NUMBER() OVER (ORDER BY sid) - 1 AS item_idx
+                SELECT item_id, ROW_NUMBER() OVER (ORDER BY item_id) - 1 AS item_idx
                 FROM (SELECT DISTINCT item_id FROM filtered_events)
             )
            SELECT e.*, u.user_idx, s.item_idx
@@ -60,8 +60,8 @@ class EventProcessor:
         self.filter_multi_event_file()
         self.encode_ids()
 
-        self.con.execute(f"COPY (SELECT * FROM events_with_idx) TO '{output_path}' (FORMAT PARQUET)")
-        print(f'saved filtered multi event file to {output_path}')
+        # self.con.execute(f"COPY (SELECT * FROM events_with_idx) TO '{output_path}' (FORMAT PARQUET)")
+        # print(f'saved filtered multi event file to {output_path}')
 
     def split_data(self, split_ratios: dict, split_paths: dict):
         query = f"""
@@ -83,7 +83,7 @@ class EventProcessor:
         """
         self.con.execute(query)
         print(f"Data was split to {split_ratios['train'] * 100}% train set, "
-              f"{split_ratios['val'] * 100}% validation set,"
+              f"{split_ratios['val'] * 100}% validation set, "
               f"{split_ratios['test'] * 100}% test set")
 
         self.con.execute(f"COPY (SELECT * FROM split_data WHERE split='train') TO '{split_paths['train']}' (FORMAT PARQUET)")

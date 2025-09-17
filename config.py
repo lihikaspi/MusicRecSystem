@@ -20,7 +20,7 @@ STAGE_FILES = [
 
 # Save directories
 DATA_DIR = f"project_data/YambdaData{DATASET_SIZE}/"
-PROCESSED_DIR = "processed_data/"
+PROCESSED_DIR = "processed_data"
 RECS_DIR = "recs/"
 
 # Raw interaction files
@@ -61,11 +61,11 @@ RAW_DATA_FILES = [
 
 # Mapping edge type names to integer IDs
 EDGE_TYPE_MAPPING = {
-    "listen": 0,
-    "like": 1,
-    "dislike": 2,
-    "unlike": 3,
-    "undislike": 4
+    "listen": 1,
+    "like": 2,
+    "dislike": 3,
+    "unlike": 4,
+    "undislike": 5
 }
 
 # user interaction threshold
