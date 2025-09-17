@@ -1,121 +1,99 @@
-import os
 import duckdb
-from ..config import (PROCESSED_LISTENS_FILE, WEIGHTS, RAW_LISTENS_FILE, RAW_LIKES_FILE, RAW_DISLIKES_FILE, RAW_UNLIKES_FILE, RAW_UNDISLIKES_FILE,
-                      RAW_MULTI_EVENT_FILE, TRAIN_RATIO, VAL_RATIO, TEST_RATIO, PROCESSED_DIR, TRAIN_FILE, VAL_FILE, TEST_FILE)
 
 class EventProcessor:
-    def __init__(self, con: duckdb.DuckDBPyConnection, embeddings_path):
+    def __init__(self, con: duckdb.DuckDBPyConnection, embeddings_path, multi_event_path):
         self.con = con
         self.embeddings_path = embeddings_path
+        self.multi_event_path = multi_event_path
 
-    def compute_active_users(self, multi_event_path, threshold):
+
+    def compute_active_users(self, threshold):
         query = f"""
             CREATE TEMPORARY TABLE active_users AS
             SELECT uid
-            FROM read_parquet('{multi_event_path}')
+            FROM read_parquet('{self.multi_event_path}')
             GROUP BY uid
             HAVING COUNT(*) >= {threshold}
         """
         self.con.execute(query)
         print("Temporary table 'active_users' created.")
 
-    def filter_single_event_file(self, file_path, save_listens=False):
-        file_name = os.path.basename(file_path)
-        table_name = file_name.replace(".parquet", "")
+
+    def filter_multi_event_file(self):
         query = f"""
+            CREATE TEMPORARY TABLE filtered_events AS
             SELECT e.*
-            FROM read_parquet('{file_path}') e
+            FROM read_parquet('{self.multi_event_path}') e
             INNER JOIN read_parquet('{self.embeddings_path}') emb
                 ON e.item_id = emb.item_id
             INNER JOIN active_users au
                 ON e.uid = au.uid
             WHERE e.uid IS NOT NULL AND e.item_id IS NOT NULL
         """
-        if save_listens:
-            self.con.execute(f"COPY ({query}) TO '{PROCESSED_LISTENS_FILE}' (FORMAT PARQUET)")
-            print(f"Filtered listens saved to {PROCESSED_LISTENS_FILE}")
+        self.con.execute(query)
+        print("Temporary table 'filtered_events' created.")
 
-        self.con.execute(f"CREATE TEMPORARY TABLE {table_name} AS {query}")
-        print(f"Filtered {file_name} loaded into memory as '{table_name}'.")
 
-    def filter_all_events(self, raw_files):
-        for file_path in raw_files:
-            save_listens = os.path.basename(file_path) == "listens.parquet"
-            self.filter_single_event_file(file_path, save_listens=save_listens)
-
-    def create_union_tables(self):
+    def encode_ids(self):
         query = """
-        CREATE TEMPORARY TABLE interactions AS
-        SELECT uid, item_id, timestamp, 'listen' AS event_type FROM listens
-        UNION ALL
-        SELECT uid, item_id, timestamp, 'like' AS event_type FROM likes
-        UNION ALL
-        SELECT uid, item_id, timestamp, 'dislike' AS event_type FROM dislikes
-        UNION ALL
-        SELECT uid, item_id, timestamp, 'unlike' AS event_type FROM unlikes
-        UNION ALL
-        SELECT uid, item_id, timestamp, 'undislike' AS event_type FROM undislikes
+            CREATE TEMPORARY TABLE events_with_idx AS
+            WITH 
+            user_index AS (
+                SELECT uid, ROW_NUMBER() OVER (ORDER BY uid) - 1 AS user_idx
+                FROM (SELECT DISTINCT uid FROM filtered_events)
+            ),
+            song_index AS (
+                SELECT item_id, ROW_NUMBER() OVER (ORDER BY sid) - 1 AS item_idx
+                FROM (SELECT DISTINCT item_id FROM filtered_events)
+            )
+           SELECT e.*, u.user_idx, s.item_idx
+           FROM filtered_events e
+                JOIN user_index u USING (uid)
+                JOIN song_index s USING (item_id)
         """
         self.con.execute(query)
-        print("Union table 'interactions' created.")
+        print("Temporary table 'events_with_idx' created.")
 
-    def add_multi_event_table(self):
+
+    def save_filtered_events(self, output_path, interactions_threshold):
+        self.compute_active_users(interactions_threshold)
+        self.filter_multi_event_file()
+        self.encode_ids()
+
+        self.con.execute(f"COPY (SELECT * FROM events_with_idx) TO '{output_path}' (FORMAT PARQUET)")
+        print(f'saved filtered multi event file to {output_path}')
+
+    def split_data(self, split_ratios: dict, split_paths: dict):
         query = f"""
-        CREATE TEMPORARY TABLE multi_interactions
-        SELECT *
-        FROM read_parquet('{RAW_MULTI_EVENT_FILE}')
+            CREATE TEMPORARY TABLE split_data AS
+            WITH ordered AS (
+                SELECT e.*,
+                       ROW_NUMBER() OVER (PARTITION BY e.uid ORDER BY e.timestamp) AS rn,
+                       COUNT(*) OVER (PARTITION BY e.uid) AS total_events
+                FROM events_with_idx e
+            )
+            SELECT o.*,
+                   CASE 
+                       WHEN o.rn <= {split_ratios['train']} * o.total_events THEN 'train'
+                       WHEN o.rn <= ({split_ratios['train']} + {split_ratios['val']}) * o.total_events THEN 'val'
+                       ELSE 'test'
+                   END AS split
+            FROM ordered o
+            ORDER BY o.uid, o.timestamp
         """
         self.con.execute(query)
-        print("Multi-event data added to 'interactions' table.")
+        print(f"Data was split to {split_ratios['train'] * 100}% train set, "
+              f"{split_ratios['val'] * 100}% validation set,"
+              f"{split_ratios['test'] * 100}% test set")
 
-    def split_data(self):
-        query ="""
-        CREATE TEMPORARY TABLE interactions_split AS
-        WITH ordered AS (
-            SELECT
-                user_id,
-                song_id,
-                timestamp,
-                interaction_type,
-                ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY timestamp) AS rn,
-                COUNT(*) OVER (PARTITION BY user_id) AS total_events
-            FROM interactions
-        )
-        SELECT
-            user_id,
-            song_id,
-            timestamp,
-            interaction_type,
-            CASE
-                WHEN rn <= {TRAIN_RATIO} * total_events THEN 'train'
-                ELSE 'test'
-            END AS split
-        FROM ordered
-        ORDER BY user_id, timestamp;
-        """
+        self.con.execute(f"COPY (SELECT * FROM split_data WHERE split='train') TO '{split_paths['train']}' (FORMAT PARQUET)")
+        print(f"Train data saved to {split_paths['train']}")
 
-        self.con.execute(query)
+        self.con.execute(f"COPY (SELECT * FROM split_data WHERE split='val') TO '{split_paths['val']}' (FORMAT PARQUET)")
+        print(f"Validation data saved to {split_paths['val']}")
 
-        # create train, test dbs
-        query = """
-        CREATE TEMPORARY TABLE train AS
-        SELECT * FROM interactions_split WHERE split='train'
-        """
-        self.con.execute(query)
-        query = """
-        CREATE TEMPORARY TABLE test AS
-        SELECT * FROM interactions_split WHERE split='test'
-        """
-        self.con.execute(query)
-
-        print("Data split into train and test sets in 'interactions_split' table.")
-
-        # Save to parquet files
-        self.con.execute(f"COPY (SELECT * FROM interactions_split WHERE split='train') TO '{TRAIN_FILE}' (FORMAT PARQUET)")
-        print(f"Train data saved to {TRAIN_FILE}")
-        self.con.execute(f"COPY (SELECT * FROM interactions_split WHERE split='test') TO '{TEST_FILE}' (FORMAT PARQUET)")
-        print(f"Test data saved to {TEST_FILE}")
-        # Note: VAL_RATIO is set to 0.0, so no validation set is created.
+        self.con.execute(f"COPY (SELECT * FROM split_data WHERE split='test') TO '{split_paths['test']}' (FORMAT PARQUET)")
+        print(f"Test data saved to {split_paths['test']}")
 
 
 

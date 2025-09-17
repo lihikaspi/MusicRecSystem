@@ -1,11 +1,11 @@
 import duckdb
-from ..config import (
+from config import (
     RAW_DATA_FILES,
     RAW_MULTI_EVENT_FILE,
     EMBEDDINGS_FILE,
     INTERACTIONS_FILE,
     INTERACTION_THRESHOLD,
-    EVENT_TYPES
+    EVENT_TYPES, SPLIT_RATIOS, SPLIT_PATHS
 )
 from event_processor import EventProcessor
 from edge_aggregator import EdgeAggregator
@@ -14,18 +14,10 @@ from edge_aggregator import EdgeAggregator
 def main():
     con = duckdb.connect()
 
-    # Step 1: Compute active users
-    processor = EventProcessor(con, EMBEDDINGS_FILE)
-    processor.compute_active_users(RAW_MULTI_EVENT_FILE, INTERACTION_THRESHOLD)
+    processor = EventProcessor(con, EMBEDDINGS_FILE, RAW_MULTI_EVENT_FILE)
+    processor.save_filtered_events(INTERACTIONS_FILE, INTERACTION_THRESHOLD)
 
-    # Step 2: Filter all single-event files
-    processor.filter_all_events(RAW_DATA_FILES)
-
-    # Step 2.5: Create union table
-    processor.create_union_tables()
-    processor.add_multi_event_table()
-
-    processor.split_data()
+    processor.split_data(SPLIT_RATIOS, SPLIT_PATHS)
 
     # Step 3: Aggregate edges
     aggregator = EdgeAggregator(con)

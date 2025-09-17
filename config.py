@@ -39,7 +39,6 @@ ALBUM_MAPPING_FILE = f"{DATA_DIR}/album_mapping.parquet"
 ARTIST_MAPPING_FILE = f"{DATA_DIR}/artist_mapping.parquet"
 
 # Processed files
-PROCESSED_LISTENS_FILE = f"{PROCESSED_DIR}/listens.parquet"
 INTERACTIONS_FILE = f"{PROCESSED_DIR}/interactions.parquet"
 TRAIN_FILE = f"{PROCESSED_DIR}/train.parquet"
 VAL_FILE = f"{PROCESSED_DIR}/val.parquet"
@@ -73,11 +72,11 @@ INTERACTION_THRESHOLD = 5
 
 # event type Weights
 WEIGHTS = {
-    "listens.parquet": 1.0,
-    "likes.parquet": 3.0,
-    "dislikes.parquet": -3.0,
-    "unlikes.parquet": -1.0,
-    "undislikes.parquet": -1.0
+    "listens": 1.0,
+    "likes": 3.0,
+    "dislikes": -3.0,
+    "unlikes": -1.0,
+    "undislikes": -1.0
 }
 
 # list of event types and their opposites
@@ -90,9 +89,17 @@ EVENT_TYPES = [
 ]
 
 # Train/val/test split ratios
-TRAIN_RATIO = 0.8
-VAL_RATIO = 0.0
-TEST_RATIO = 0.2
+SPLIT_RATIOS = {
+    "train": 0.8,
+    "val": 0.0,
+    "test": 0.2
+}
+
+SPLIT_PATHS = {
+    "train": TRAIN_FILE,
+    "val": VAL_FILE,
+    "test": TEST_FILE
+}
 
 # -------------------
 # GNN HYPERPARAMETERS
