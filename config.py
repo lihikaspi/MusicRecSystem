@@ -43,6 +43,7 @@ INTERACTIONS_FILE = f"{PROCESSED_DIR}/interactions.parquet"
 TRAIN_FILE = f"{PROCESSED_DIR}/train.parquet"
 VAL_FILE = f"{PROCESSED_DIR}/val.parquet"
 TEST_FILE = f"{PROCESSED_DIR}/test.parquet"
+EDGES_FILE = f"{PROCESSED_DIR}/train_edges.parquet"
 GRAPH_FILE = f"{PROCESSED_DIR}/graph.pt"
 
 # List of single-event files
@@ -80,7 +81,7 @@ WEIGHTS = {
 }
 
 # list of event types and their opposites
-EVENT_TYPES = [
+OPPOSITE_EVENT_TYPES = [
     {"table": "listens", "opposite": None},
     {"table": "likes", "opposite": "unlikes"},
     {"table": "unlikes", "opposite": None},

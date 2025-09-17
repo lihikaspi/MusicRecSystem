@@ -68,8 +68,8 @@ class EventProcessor:
             CREATE TEMPORARY TABLE split_data AS
             WITH ordered AS (
                 SELECT e.*,
-                       ROW_NUMBER() OVER (PARTITION BY e.uid ORDER BY e.timestamp) AS rn,
-                       COUNT(*) OVER (PARTITION BY e.uid) AS total_events
+                       ROW_NUMBER() OVER (PARTITION BY e.user_idx ORDER BY e.timestamp) AS rn,
+                       COUNT(*) OVER (PARTITION BY e.user_idx) AS total_events
                 FROM events_with_idx e
             )
             SELECT o.*,
@@ -79,7 +79,7 @@ class EventProcessor:
                        ELSE 'test'
                    END AS split
             FROM ordered o
-            ORDER BY o.uid, o.timestamp
+            ORDER BY o.user_idx, o.timestamp
         """
         self.con.execute(query)
         print(f"Data was split to {split_ratios['train'] * 100}% train set, "

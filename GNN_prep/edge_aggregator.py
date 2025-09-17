@@ -2,41 +2,37 @@ import duckdb
 from config import WEIGHTS, EDGE_TYPE_MAPPING
 
 class EdgeAggregator:
-    def __init__(self, con: duckdb.DuckDBPyConnection):
+    def __init__(self, con: duckdb.DuckDBPyConnection, events_path, weights, embeddings_path):
         self.con = con
+        self.events_path = events_path
+        self.weights = weights
+        self.embeddings_path = embeddings_path
 
-    def create_edge_table(self, event_table, event_type, opposite_table=None):
-        cancellation_sql = ""
-        if opposite_table:
-            cancellation_sql = f"""
-                LEFT JOIN (
-                    SELECT uid, item_id, COUNT(*) AS cnt
-                    FROM {opposite_table}
-                    GROUP BY uid, item_id
-                ) opp
-                ON e.uid = opp.uid AND e.item_id = opp.item_id
-            """
 
-        sql = f"""
-            CREATE TEMPORARY TABLE {event_type}_edges AS
-            SELECT e.uid, e.item_id AS song_id,
-                   '{event_type}' AS event_type,
-                   GREATEST(COUNT(*) - COALESCE(opp.cnt,0),0) AS edge_count,
-                   {WEIGHTS['{event_table}.parquet']} AS edge_weight,
-                   {EDGE_TYPE_MAPPING['{event_type}']} AS event_type_id
-            FROM {event_table} e
-            {cancellation_sql}
-            GROUP BY e.uid, e.item_id
+    def aggregate_edges(self, output_path):
+        case_expr = "CASE e.event_type\n"
+        for etype, weight in self.weights.items():
+            case_expr += f"    WHEN '{etype}' THEN {weight}\n"
+        case_expr += "END AS event_weight"
+
+        query = f"""
+            CREATE TEMPORARY TABLE agg_edges AS
+            SELECT 
+                e.user_inx, 
+                e.item_idx, 
+                e.event_type, 
+                COUNT(*) AS edge_count,
+                AVG(CASE WHEN e.event_type = 'listen' THEN e.played_ratio_pct END) AS edge_avg_played_ratio,
+                {case_expr},
+                emb.embed AS edge_embed, emb.normalized_embed AS edge_normalized_embed
+            FROM read_parquet('{self.events_path}') e
+            LEFT JOIN read_parquet('{self.embeddings_path}') emb
+                ON e.item_id = emb.item_id
+            GROUP BY e.user_inx, e.item_idx, e.event_type, emb.item_id, emb.embed, emb.normalized_embed
         """
-        self.con.execute(sql)
-        print(f"Aggregated edges for event type '{event_type}'.")
+        self.con.execute(query)
+        self.con.execute(f"COPY (SELECT * FROM agg_edges) TO '{output_path}' (FORMAT PARQUET)")
+        print(f"Edge data saved to {output_path}")
 
-    def aggregate_all_edges(self, event_config):
-        for e in event_config:
-            self.create_edge_table(e["table"], e["table"], opposite_table=e["opposite"])
 
-    def merge_edges(self, output_file, event_config):
-        edge_tables = [f"{e['table']}_edges" for e in event_config]
-        union_query = " UNION ALL ".join([f"SELECT * FROM {t}" for t in edge_tables])
-        self.con.execute(f"COPY ({union_query}) TO '{output_file}' (FORMAT PARQUET)")
-        print(f"All per-event-type edges saved to {output_file}.")
+
