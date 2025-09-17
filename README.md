@@ -201,7 +201,7 @@ All the interaction files and metadata available in this dataset are saved in pa
 python run_all.py --stage download
 
 # directly
-python yambda_download.py
+python download_data.py
 ```
 
 The dataset size, type and save directory are set in the `config.py` file. Example:

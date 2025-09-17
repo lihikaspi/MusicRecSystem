@@ -2,6 +2,10 @@
 DATASET_SIZE = "50m"  # Options: "50m", "500m", "5b"
 DATASET_TYPE = "flat" # options: "flat", "sequential"
 
+# Flag to download full dataset or only essential files
+# True = download everything, False = only multi_event + embeddings + mappings
+DOWNLOAD_FULL_DATASET = False
+
 # --------
 # PIPELINE
 # --------
