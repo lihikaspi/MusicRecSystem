@@ -1,75 +1,59 @@
-import os
+import duckdb
 import torch
-import pandas as pd
-import numpy as np
 from torch_geometric.data import HeteroData
-from config import PROCESSED_DIR, EDGE_TYPE_MAPPING
 
-def main():
-    os.makedirs(PROCESSED_DIR, exist_ok=True)
+class GraphBuilder:
+    def __init__(self, con: duckdb.DuckDBPyConnection, edges_file):
+        self.con = con
+        self.edges_file = edges_file
 
-    # ----------------------------
-    # Load data
-    # ----------------------------
-    train = pd.read_parquet(os.path.join(PROCESSED_DIR, "train.parquet"))
-    embeddings = pd.read_parquet(os.path.join(PROCESSED_DIR, "embeddings.parquet")).to_numpy()
 
-    # Ensure IDs are 0-indexed and continuous
-    train["user_idx"] = pd.Categorical(train["user_id"]).codes
-    train["item_idx"] = pd.Categorical(train["item_id"]).codes
+    def build_graph(self):
+        # Query all edges from the existing temporary table
+        query = """
+                SELECT user_idx, item_idx, edge_count, edge_avg_played_ratio, edge_weight
+                FROM agg_edges
+                """
 
-    num_users = train["user_idx"].nunique()
-    num_items = train["item_idx"].nunique()
+        edges_df = self.con.execute(query).fetch_df()
 
-    # ----------------------------
-    # Build HeteroData
-    # ----------------------------
-    data = HeteroData()
+        # Edge indices
+        edge_index = torch.tensor(
+            [edges_df['user_idx'].values, edges_df['item_idx'].values],
+            dtype=torch.long
+        )
 
-    # Users: learnable embeddings
-    data["user"].num_nodes = num_users
+        # Fixed-size edge feature vector: [edge_count, edge_avg_played_ratio, event_weight]
+        edge_attr = torch.tensor(
+            edges_df[['edge_count', 'edge_avg_played_ratio', 'edge_weight']].fillna(0).values,
+            dtype=torch.float
+        )
 
-    # Items: song embeddings (audio + optional metadata)
-    data["item"].x = torch.tensor(embeddings, dtype=torch.float)
+        # HeteroData graph
+        data = HeteroData()
+        data['user', 'interacts', 'item'].edge_index = edge_index
+        data['user', 'interacts', 'item'].edge_attr = edge_attr
 
-    # ----------------------------
-    # Prepare edges
-    # ----------------------------
-    # Convert edge types to integers
-    train["edge_type"] = train["interaction_type"].map(EDGE_TYPE_MAPPING)
+        # Item node features: only normalized embedding
+        item_embeddings_df = self.con.execute("""
+                                              SELECT item_idx, edge_normalized_embed, artist_id, album_id
+                                              FROM agg_edges
+                                              GROUP BY item_idx, edge_normalized_embed, artist_id, album_id
+                                              """).fetch_df()
 
-    # Edge index (user -> item)
-    edge_index = torch.tensor([
-        train["user_idx"].values,
-        train["item_idx"].values
-    ], dtype=torch.long)
+        data['item'].x = torch.tensor(item_embeddings_df['edge_normalized_embed'].to_list(), dtype=torch.float)
 
-    # Edge type tensor
-    edge_type = torch.tensor(train["edge_type"].values, dtype=torch.long)
+        # Store artist and album IDs separately for use as indices in GNN
+        data['item'].artist_id = torch.tensor(item_embeddings_df['artist_id'].values, dtype=torch.long)
+        data['item'].album_id = torch.tensor(item_embeddings_df['album_id'].values, dtype=torch.long)
 
-    # Edge weight tensor
-    # Example: listen count (or 1/-1 for like/dislike)
-    edge_weight = torch.tensor(train["weight"].values, dtype=torch.float)
+        # Users: store IDs for learnable embeddings
+        num_users = edges_df['user_idx'].max() + 1
+        data['user'].user_id = torch.arange(num_users, dtype=torch.long)
 
-    # Optional: normalize or include timestamp
-    if "timestamp" in train.columns:
-        # Convert UNIX timestamp to float (e.g., days since min timestamp)
-        min_ts = train["timestamp"].min()
-        edge_recency = ((train["timestamp"] - min_ts) / (train["timestamp"].max() - min_ts)).astype(np.float32)
-        edge_recency = torch.tensor(edge_recency.values, dtype=torch.float)
-        data["user", "interacts", "item"].edge_recency = edge_recency
+        return data
 
-    # Assign to HeteroData
-    data["user", "interacts", "item"].edge_index = edge_index
-    data["user", "interacts", "item"].edge_type = edge_type
-    data["user", "interacts", "item"].edge_weight = edge_weight
-
-    # ----------------------------
-    # Save graph
-    # ----------------------------
-    torch.save(data, os.path.join(PROCESSED_DIR, "graph.pt"))
-    print(f"Graph built: {num_users} users, {num_items} items, {edge_index.shape[1]} edges")
-    print(f"Edge types: {train['interaction_type'].unique()}")
-
-if __name__ == '__main__':
-    main()
+    def save_graph(self, output_path):
+        data = self.build_graph()
+        torch.save(data, output_path)
+        print(f"Graph saved to {output_path}")
