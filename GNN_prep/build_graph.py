@@ -21,7 +21,7 @@ class GraphBuilder:
         """
         # Query all edges from the existing temporary table
         query = """
-                SELECT user_idx, item_idx, edge_count, edge_avg_played_ratio, edge_type
+                SELECT user_idx, item_idx, edge_count, edge_avg_played_ratio, edge_type, edge_weight
                 FROM agg_edges_event_type 
                 """
 

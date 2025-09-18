@@ -127,7 +127,7 @@ class EventProcessor:
         """
         self.con.execute(query)
         print(f"Data was split into:\n"
-              f" {split_ratios['train'] * 100}% train set\n"
+              f"{split_ratios['train'] * 100}% train set\n"
               f"{split_ratios['val'] * 100}% validation set\n"
               f"{split_ratios['test'] * 100}% test set")
 

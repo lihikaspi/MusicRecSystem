@@ -10,11 +10,12 @@ Created By: Lihi Kaspi, Harel Oved & Niv Maman
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [The Yandex Yambda Dataset](#the-yandex-yambda-dataset)
-3. [Setup and Requirements](#setup-and-requirements)
-4. [File Structure](#file-structure)
-5. [Configuration](#configuration)
-6. [Project Pipeline](#project-pipeline)
+2. [Quick Start](#quick-start)
+3. [The Yandex Yambda Dataset](#the-yandex-yambda-dataset)
+4. [Setup and Requirements](#setup-and-requirements)
+5. [File Structure](#file-structure)
+6. [Configuration](#configuration)
+7. [Project Pipeline](#project-pipeline)
    - [Stage 1: Downloading the Dataset](#stage-1-downloading-the-dataset)
    - [Stage 2: Preparing the Data for the GNN](#stage-2-preparing-the-data-for-the-gnn)
      - [1. Data Preprocessing](#1-data-preprocessing)
@@ -23,14 +24,46 @@ Created By: Lihi Kaspi, Harel Oved & Niv Maman
    - [Stage 4: ANN Search and Retrieval](#stage-4-ann-search-and-retrieval)
      - [1. ANN Indexing and Retrieval](#1-ann-indexing-and-retrieval)
      - [2. Retrieval Evaluation](#2-retrieval-evaluation)
-7. [Notes](#notes)
 
 ---
 
 ## Overview
 
-This project implements a music recommendation system using the Yandex Yambda dataset.
-The workflow includes downloading and preprocessing the dataset, constructing a user-song graph, training a GNN, and performing ANN-based recommendation retrieval.
+This project implements a scalable music recommendation system using the Yandex Yambda dataset. 
+The system combines Graph Neural Networks (GNNs) with Approximate Nearest Neighbor (ANN) search to provide efficient and accurate music recommendations.
+
+The workflow includes downloading and preprocessing the dataset, constructing a user-song bipartite graph, training a GNN to learn user and song embeddings, and performing ANN-based recommendation retrieval with comprehensive evaluation.
+
+**Key Features:**
+- Handles large-scale music datasets (50M to 5B interactions)
+- Graph-based representation of user-song interactions
+- GNN-powered embedding learning
+- Fast ANN-based recommendation retrieval
+- Comprehensive evaluation metrics
+
+---
+
+## Quick Start
+
+```bash
+# Clone repository and navigate to project directory
+cd music-recommendation-system
+
+# Install dependencies (requires Python 3.10+)
+pip install -r requirements.txt
+
+# Verify GPU setup
+python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
+
+# Run full pipeline (requires GPU)
+python run_all.py
+
+# Or run individual stages
+python run_all.py --stage 1  # Download dataset
+python run_all.py --stage 2  # Prepare data for GNN
+python run_all.py --stage 3  # Train GNN
+python run_all.py --stage 4  # ANN search and evaluation
+```
 
 ---
 
@@ -41,11 +74,18 @@ It includes both implicit (listens) and explicit (likes/dislikes) feedback and p
 The dataset is available in multiple scales (50M, 500M, 5B interactions) in Parquet format.  
 More details about the dataset can be found here: [Yandex Yambda dataset](https://huggingface.co/datasets/yandex/yambda)
 
-The files contain:
-- **`multi_event.parquet`:** a unified table including multiple types of interactions (`listen`, `like`, `unlike`, `dislike`, `undislike`). This file may contain `null` values and is not cleaned.
-- **single-event records:** cleaned files for each interaction type
-- **audio embeddings:** pre-computed audio embedding per track
-- **song mappings:** song-album and song-artist mappings
+### Dataset Components
+
+- **`multi_event.parquet`**: Unified table with multiple interaction types (`listen`, `like`, `unlike`, `dislike`, `undislike`). May contain null values.
+- **Single-event records**: Cleaned files for each interaction type
+- **Audio embeddings**: Pre-computed audio embeddings per track
+- **Song mappings**: Song-album and song-artist relationship mappings
+
+### Dataset Scales
+
+- **50m**: Lightweight version, suitable for experiments and development
+- **500m**: Medium-scale dataset for comprehensive testing
+- **5b**: Full dataset, production-scale but very resource-intensive
 
 ---
 
@@ -57,7 +97,7 @@ Ensure your environment has enough disk space for the dataset size you plan to d
 
 > Python version: Python 3.10+
 
-Install required Python packages:
+### Installing Dependencies
 
 ```bash
 pip install -r requirements.txt
@@ -110,83 +150,107 @@ print(f"PyG version: {torch_geometric.__version__}")
 
 ## File Structure
 
-> **Note:** Parquet files were not uploaded to this Git repository.
+> **Note:** data files were not uploaded to this Git repository.
 
 ### Core Scripts
-- `config.py`
-- `run_all.py`
-- `download_data.py` 
-- `run_GNN_prep.py`
-- `train_GNN.py`
-- `run_ANN_search.py`
-- `requirements.txt`
+```
+├── config.py                 # Configuration and hyperparameters
+├── run_all.py                # Main pipeline runner
+├── download_data.py          # Dataset download script
+├── run_GNN_prep.py           # GNN data preparation
+├── train_GNN.py              # GNN training
+├── run_ANN_search.py         # ANN search and evaluation
+└── requirements.txt          # Python dependencies
+```
 
 ### Data Processing (`GNN_prep/`)
-- `event_processor.py`
-- `edge_assembler.py`
-- `build_graph.py`
+```
+├── event_processor.py        # Interaction data preprocessing
+├── edge_assembler.py         # Graph edge creation and aggregation
+└── build_graph.py            # Graph construction for GNN
+```
 
 ### GNN Modeling (`GNN_model/`)
-- `GNN_class.py`
+```
+└── GNN_class.py              # Graph Neural Network implementation
+```
 
 ### ANN Search (`ANN_search/`)
-- `ANN_index_recs.py`
-- `ANN_eval.py`
+```
+├── ANN_index_recs.py         # ANN indexing and recommendation
+└── ANN_eval.py               # Recommendation evaluation metrics
+```
 
 ### Processed Data (`processed_data/`)
-- `interactions.parquet` (optional)
-- `train.parquet`
-- `val.parquet`
-- `test.parquet`
-- `train_edges.parquet` (optional)
-- `graph.pt`
+```
+├── interactions.parquet      # Processed interactions data (optional)
+├── train.parquet             # Training set
+├── val.parquet               # Validation set
+├── test.parquet              # Test set
+├── train_edges.parquet       # Training edges (optional)
+└── graph.pt                  # PyTorch graph object
+```
 
 ### Project Data (`project_data/`)
-- `download_yambda.py`
-- `yambda_inspect.py`
-- `yambda_stats.py`
-- #### Raw Dataset (`YambdaData50m/`)
-   - `listens.parquet` / `likes.parquet` / `dislikes.parquet` / `unlikes.parquet` / `undislikes.parquet` (optional)
-   - `multi_event.parquet`
-   - `embeddings.parquet`
-   - `album_mapping.parquet` 
-   - `artist_mapping.parquet`
-   - `yambda_columns.csv`
-   - `YambdaStats_50m.csv`
-
+```
+├── download_yambda.py        # Yambda dataset wrapper
+├── yambda_inspect.py         # Dataset inspection utility
+├── yambda_stats.py           # Dataset statistics generator
+└── YambdaData50m/            # Raw dataset directory
+    ├── multi_event.parquet
+    ├── embeddings.parquet
+    ├── album_mapping.parquet
+    ├── artist_mapping.parquet
+    ├── yambda_columns.csv
+    └── YambdaStats_50m.csv
+```
 
 ---
 
 ## Configuration
 
-The `config.py` file contains the save directories, dataset parameter, hyperparameters for each stage and also defines the pipeline stages.
+The `config.py` file contains all configuration parameters:
+
+- **Dataset parameters**: Size, type, download options
+- **Processing parameters**: Interaction thresholds, event-type weights, split ratios
+- **GNN hyperparameters**: TBD
+- **ANN parameters**: TBD
+- **File paths**: Input/output directories
+
+Example key configurations:
+```python
+# Dataset
+DATASET_SIZE = "50m"              # Options: "50m", "500m", "5b"
+DATASET_TYPE = "flat"             # Options: "flat", "sequential"
+DOWNLOAD_FULL_DATASET = False     # Download single-event files
+
+# Processing
+INTERACTION_THRESHOLD = 5         # Minimum interactions per user
+SPLIT_RATIOS = {"train": 0.8, "val": 0.0, "test": 0.2}
+
+# more examples about the GNN and ANN TBD
+```
 
 ---
 
 ## Project Pipeline
 
-You can run the entire project or individual stages via the top-level runner `run_all.py` (recommended):
+### Running the Pipeline
 
+**Full pipeline (recommended):**
 ```bash
-# Run all stages in order
 python run_all.py
-
-# Run a specific stage by number (1–4)
-python run_all.py --stage 3
-
-# Run a specific stage by name
-python run_all.py --stage train_gnn
 ```
 
-The stages correspond to the scripts as defined in `config.py`:
+**Individual stages:**
+```bash
+python run_all.py --stage 1        # or --stage download
+python run_all.py --stage 2        # or --stage gnn_prep
+python run_all.py --stage 3        # or --stage train_gnn
+python run_all.py --stage 4        # or --stage ann_search
+```
 
-1. `download` → `download_data.py`
-2. `gnn_prep` → `run_GNN_prep.py`
-3. `train_gnn` → `train_GNN.py`
-4. `ann_search` → `run_ANN_search.py`
-
-Optionally, for development or debugging, you can also run individual stage scripts directly:
-
+**Direct script execution (for debugging):**
 ```bash
 python download_data.py
 python run_GNN_prep.py
@@ -221,17 +285,11 @@ DATA_DIR = f"project_data/YambdaData{DATASET_SIZE}/"
 
 Additional scripts:
 
-#### Inspect Columns
-Saves a CSV with column names and the first row of each file:
-
 ```bash
+# Saves a CSV with column names and the first row of each file:
 python project_data/yambda_inspect.py
-```
 
-#### Basic Statistics
-Saves a CSV with basic statistics for each interaction file:
-
-```bash
+# Saves a CSV with basic statistics for each interaction file
 python project_data/yambda_stats.py
 ```
 
@@ -318,15 +376,5 @@ python run_ANN_search.py
 
 #### 2. Retrieval Evaluation
 
-
-
----
-
-## Notes
-
-- Dataset size options:
-  - `50m`: lightweight, suitable for experiments.
-  - `500m`: medium-scale dataset.
-  - `5b`: full dataset, very large and resource-intensive.
 
 
