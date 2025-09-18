@@ -21,8 +21,8 @@ class GraphBuilder:
         """
         # Query all edges from the existing temporary table
         query = """
-                SELECT user_idx, item_idx, edge_count, edge_avg_played_ratio, edge_weight, edge_type
-                FROM agg_edges_event_type
+                SELECT user_idx, item_idx, edge_count, edge_avg_played_ratio, edge_type
+                FROM agg_edges_event_type 
                 """
 
         edges_df = self.con.execute(query).fetch_df()
@@ -31,9 +31,15 @@ class GraphBuilder:
         edge_index_np = np.vstack((edges_df['user_idx'].values, edges_df['item_idx'].values))
         edge_index = torch.from_numpy(edge_index_np).long()
 
-        # Fixed-size edge feature vector: [edge_count, edge_avg_played_ratio, event_weight]
+        # Edge attributes: only static ones (not weights)
         edge_attr = torch.tensor(
-            edges_df[['edge_type', 'edge_count', 'edge_avg_played_ratio', 'edge_weight']].fillna(0).values,
+            edges_df[['edge_type', 'edge_count', 'edge_avg_played_ratio']].fillna(0).values,
+            dtype=torch.float
+        )
+
+        # Initial edge weights
+        edge_weight_init = torch.tensor(
+            edges_df['edge_weight'].fillna(0).values,
             dtype=torch.float
         )
 
@@ -41,6 +47,7 @@ class GraphBuilder:
         data = HeteroData()
         data['user', 'interacts', 'item'].edge_index = edge_index
         data['user', 'interacts', 'item'].edge_attr = edge_attr
+        data['user', 'interacts', 'item'].edge_weight_init = edge_weight_init
 
         # Item node features: only normalized embedding
         item_embeddings_df = self.con.execute("""
