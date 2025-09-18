@@ -27,6 +27,10 @@ DATA_DIR = f"project_data/YambdaData{DATASET_SIZE}/"
 PROCESSED_DIR = "processed_data"
 RECS_DIR = "recs/"
 
+# Data additional CSVs
+DATA_COLS_FILE = f"{DATA_DIR}/yambda_columns.csv"
+DATA_STATS_FILE = f"{DATA_DIR}/YambdaStats_{DATASET_SIZE}.csv"
+
 # Raw interaction files
 RAW_LISTENS_FILE = f"{DATA_DIR}/listens.parquet"
 RAW_LIKES_FILE = f"{DATA_DIR}/likes.parquet"

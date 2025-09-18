@@ -1,28 +1,28 @@
 import os
 import pandas as pd
-from config import DATA_DIR, DATASET_SIZE
+from config import DOWNLOAD_FULL_DATASET, RAW_DATA_FILES, RAW_MULTI_EVENT_FILE, DATA_STATS_FILE
 
-# ----------------------------
-# Interaction types
-# ----------------------------
-interactions = ["likes", "listens", "multi_event", "dislikes", "unlikes", "undislikes"]
+# Decide which interactions to include
+if DOWNLOAD_FULL_DATASET:
+    # All raw interaction files + multi_event
+    interactions_files = {os.path.basename(f).replace(".parquet", ""): f for f in RAW_DATA_FILES + [RAW_MULTI_EVENT_FILE]}
+else:
+    # Only multi_event
+    interactions_files = {"multi_event": RAW_MULTI_EVENT_FILE}
 
 # Columns
 user_col = "uid"
 item_col = "item_id"
 
-# Sets to track all unique users and songs
+# Sets to track all unique users and items
 all_users = set()
 all_items = set()
 
 # List to collect stats per interaction
 stats_list = []
 
-# ----------------------------
 # Explore each interaction type
-# ----------------------------
-for interaction in interactions:
-    file_path = os.path.join(DATA_DIR, f"{interaction}.parquet")
+for interaction, file_path in interactions_files.items():
     if not os.path.exists(file_path):
         print(f"{interaction} not found, skipping...")
         continue
@@ -70,9 +70,8 @@ for interaction in interactions:
     }
     stats_list.append(stats)
 
-# ----------------------------
+
 # Create DataFrame and save to CSV
-# ----------------------------
 stats_df = pd.DataFrame(stats_list)
 
 # Add total unique users and items across all interactions
@@ -98,6 +97,5 @@ stats_df.loc[len(stats_df)] = {
 }
 
 # Save CSV
-csv_path = os.path.join(DATA_DIR, f"YambdaStats_{DATASET_SIZE}.csv")
-stats_df.to_csv(csv_path, index=False)
-print(f"\n✅ Stats saved to CSV: {csv_path}")
+stats_df.to_csv(DATA_STATS_FILE, index=False)
+print(f"\n Stats saved to CSV: {DATA_STATS_FILE}")
