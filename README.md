@@ -18,8 +18,7 @@ Created By: Lihi Kaspi, Harel Oved & Niv Maman
    - [Stage 1: Downloading the Dataset](#stage-1-downloading-the-dataset)
    - [Stage 2: Preparing the Data for the GNN](#stage-2-preparing-the-data-for-the-gnn)
      - [1. Data Preprocessing](#1-data-preprocessing)
-     - [2. Split Data](#2-split-data)
-     - [3. Build Graph](#3-build-graph)
+     - [2. Build Graph](#2-build-graph)
    - [Stage 3: GNN Modeling and Training](#stage-3-gnn-modeling-and-training)
    - [Stage 4: ANN Search and Retrieval](#stage-4-ann-search-and-retrieval)
      - [1. ANN Indexing and Retrieval](#1-ann-indexing-and-retrieval)
@@ -53,7 +52,6 @@ The files contain:
 ## Setup and Requirements
 
 Ensure your environment has enough disk space for the dataset size you plan to download (`50m`, `500m`, or `5b`).
-The 50m dataset takes approximately 18GB.
 
 **GPU Required**: This project requires a CUDA-compatible GPU for GNN training and ANN indexing. CPU-only runs are not supported.
 
@@ -117,15 +115,15 @@ print(f"PyG version: {torch_geometric.__version__}")
 ### Core Scripts
 - `config.py`
 - `run_all.py`
-- `yambda_download.py` 
+- `download_data.py` 
 - `run_GNN_prep.py`
 - `train_GNN.py`
 - `run_ANN_search.py`
 - `requirements.txt`
 
 ### Data Processing (`GNN_prep/`)
-- `data_preprocessing.py`
-- `split_data.py`
+- `event_processor.py`
+- `edge_assembler.py`
 - `build_graph.py`
 
 ### GNN Modeling (`GNN_model/`)
@@ -136,18 +134,23 @@ print(f"PyG version: {torch_geometric.__version__}")
 - `ANN_eval.py`
 
 ### Processed Data (`processed_data/`)
-- `interactions.parquet`
-- `train.parquet` / `val.parquet` / `test.parquet`
+- `interactions.parquet` (optional)
+- `train.parquet`
+- `val.parquet`
+- `test.parquet`
+- `train_edges.parquet` (optional)
 - `graph.pt`
 
 ### Project Data (`project_data/`)
+- `download_yambda.py`
 - `yambda_inspect.py`
 - `yambda_stats.py`
 - #### Raw Dataset (`YambdaData50m/`)
-   - `listens.parquet` / `likes.parquet` / `dislikes.parquet` / `unlikes.parquet` / `undislikes.parquet`
+   - `listens.parquet` / `likes.parquet` / `dislikes.parquet` / `unlikes.parquet` / `undislikes.parquet` (optional)
    - `multi_event.parquet`
    - `embeddings.parquet`
-   - `album_mapping.parquet` / `artist_mapping.parquet`
+   - `album_mapping.parquet` 
+   - `artist_mapping.parquet`
    - `yambda_columns.csv`
    - `YambdaStats_50m.csv`
 
@@ -156,7 +159,7 @@ print(f"PyG version: {torch_geometric.__version__}")
 
 ## Configuration
 
-The `config.py` file sets the save directories, dataset parameters, number of retrieved ANN results, and also defines the pipeline stages
+The `config.py` file contains the save directories, dataset parameter, hyperparameters for each stage and also defines the pipeline stages.
 
 ---
 
@@ -175,9 +178,9 @@ python run_all.py --stage 3
 python run_all.py --stage train_gnn
 ```
 
-The stages correspond to the scripts defined in `config.py`:
+The stages correspond to the scripts as defined in `config.py`:
 
-1. `download` → `download_yambda.py`
+1. `download` → `download_data.py`
 2. `gnn_prep` → `run_GNN_prep.py`
 3. `train_gnn` → `train_GNN.py`
 4. `ann_search` → `run_ANN_search.py`
@@ -185,7 +188,7 @@ The stages correspond to the scripts defined in `config.py`:
 Optionally, for development or debugging, you can also run individual stage scripts directly:
 
 ```bash
-python download_yambda.py
+python download_data.py
 python run_GNN_prep.py
 python train_GNN.py
 python run_ANN_search.py
@@ -193,7 +196,7 @@ python run_ANN_search.py
 
 ### Stage 1: Downloading the Dataset
 
-The code downloads the Yambda dataset from Hugging Face's `datasets` library using the provided wrapper class.
+The code downloads the Yambda dataset from Hugging Face's `datasets` library using the provided wrapper class found in `project_data/download_yambda.py`.   
 All the interaction files and metadata available in this dataset are saved in parquet format.
 
 ```bash
@@ -204,12 +207,15 @@ python run_all.py --stage download
 python download_data.py
 ```
 
-The dataset size, type and save directory are set in the `config.py` file. Example:
+As default, the code only download the multi_event, embeddings and mapping files.     
+To download the entire dataset (including the single-event files) update the `confid.py` file.   
+The dataset size, type and save directory are also set in the `config.py` file. Example:
 
 ```python
 # config.py
 DATASET_SIZE = "50m"        # Options: "50m", "500m", "5b"
 DATASET_TYPE = "flat"       # Options: "flat", "sequential"
+DOWNLOAD_FULL_DATASET = False
 DATA_DIR = f"project_data/YambdaData{DATASET_SIZE}/"
 ```
 
@@ -243,27 +249,43 @@ python run_GNN_prep.py
 
 #### 1. Data Preprocessing
 
-- Defines weights for each event type.
-- Calculates listen counts per song for each user.
-- Encodes user and track IDs.
-- Saves a new Parquet file `interactions.parquet` with all event records.
+Process the interactions file (`event_processor.py`):
 
-#### 2. Split Data
+- Filter out users with less interaction than a given threshold and songs without audio embeddings.
+- Encode user and song IDs to fit GNN requirements.
+- Split the interactions into train, validation, and test sets according to a given ratio.
 
-- Splits user interactions (users with ≥5 interactions) into train, validation, and test datasets.
-- Saves `train.parquet`, `val.parquet`, and `test.parquet`.
+Create the graph properties information (`edge_assembler.py`):
 
-#### 3. Build Graph
+- Aggregate the interactions into user-song-event records with interactions counter and average played ratio (for listen event).
+- Add event-type fixed weights to act as initial values for the learnable weights in the GNN.
+- Add the artist and album IDs according to the mappings and encode them.
+- Turn the event names into categories.
 
-- Builds a bipartite graph with users and songs as nodes and interactions as weighted edges.
+
+#### 2. Build Graph
+
+Construct the graph for the GNN (`build_graph.py`):
+
+- Build the graph structure: bipartite graph with users and songs as nodes and the aggregated event-type interactions as edges.
+- Edges attributes: event type, interactions counter, average played ratio. 
+- Edge weights: initial values to act as learnable weights.
+- User nodes attributes: encoded user ID to act as initial value for the learnable embedding
+- Song nodes attributes: pre-computed embeddings as node features and encoded album and artist IDs to act as initial value for the learnable embedding
 - Saves the graph as a PyTorch file `graph.pt`.
 
-
-All outputs are saved to the directory specified in `config.py` as `PROCESSED_DIR`:
+The save paths and hyperparameter such as the interaction threshold and split ratio can be found in the `config.py` file. 
+Example:
 
 ```python
-# config.py
-PROCESSED_DIR = "final_project/processed_data/"
+INTERACTION_THRESHOLD = 5
+SPLIT_RATIOS = {
+    "train": 0.8,
+    "val": 0.0,
+    "test": 0.2
+}
+PROCESSED_DIR = "processed_data"
+GRAPH_FILE = f"{PROCESSED_DIR}/graph.pt"
 ```
 
 ### Stage 3: GNN modeling and training
