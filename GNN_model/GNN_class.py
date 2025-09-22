@@ -74,7 +74,7 @@ class LightGCN(nn.Module):
 
 class LightGCNWithContent(LightGCN):
     """
-    LightGCN + content alignment:
+    LightGCN + content :
       - A linear projection W_c maps fixed item content vectors to the model space.
       - We add an L2 alignment loss between graph-learned item embeddings and W_c(content).
     """
