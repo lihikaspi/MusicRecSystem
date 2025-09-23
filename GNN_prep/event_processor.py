@@ -79,7 +79,7 @@ class EventProcessor:
         print("Temporary table 'events_with_idx' created.")
 
 
-    def save_filtered_events(self, interactions_threshold: int, output_path:str = None ):
+    def filter_events(self, interactions_threshold: int, output_path:str = None ):
         """
         runs the multi-event filtering pipeline:
             1. find active users with more interactions than the given threshold

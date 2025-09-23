@@ -1,3 +1,10 @@
+import numpy as np
+import torch
+
+# -------
+# DATASET
+# -------
+
 # Dataset settings
 DATASET_SIZE = "50m"  # Options: "50m", "500m", "5b"
 DATASET_TYPE = "flat" # options: "flat", "sequential"
@@ -12,9 +19,9 @@ DOWNLOAD_FULL_DATASET = False
 
 # Ordered pipeline (name → file)
 STAGE_FILES = [
-    ("download", "download_yambda.py"),
+    ("download", "download_data.py"),
     ("gnn_prep", "run_GNN_prep.py"),
-    ("train_gnn", "train_GNN.py"),
+    ("train_gnn", "run_GNN_train.py"),
     ("ann_search", "run_ANN_search.py"),
 ]
 
@@ -25,7 +32,8 @@ STAGE_FILES = [
 # Save directories
 DATA_DIR = f"project_data/YambdaData{DATASET_SIZE}/"
 PROCESSED_DIR = "processed_data"
-RECS_DIR = "recs/"
+GNN_MODEL = "GNN_model"
+RECS_DIR = "recs"
 
 # Data additional CSVs
 DATA_COLS_FILE = f"{DATA_DIR}/yambda_columns.csv"
@@ -40,7 +48,7 @@ RAW_UNDISLIKES_FILE = f"{DATA_DIR}/undislikes.parquet"
 RAW_MULTI_EVENT_FILE = f"{DATA_DIR}/multi_event.parquet"
 
 # Raw embeddings
-EMBEDDINGS_FILE = f"{DATA_DIR}/embeddings.parquet"
+AUDIO_EMBEDDINGS_FILE = f"{DATA_DIR}/embeddings.parquet"
 
 # Mappings
 ALBUM_MAPPING_FILE = f"{DATA_DIR}/album_mapping.parquet"
@@ -48,11 +56,11 @@ ARTIST_MAPPING_FILE = f"{DATA_DIR}/artist_mapping.parquet"
 
 # Processed files
 INTERACTIONS_FILE = f"{PROCESSED_DIR}/interactions.parquet"
-TRAIN_FILE = f"{PROCESSED_DIR}/train.parquet"
-VAL_FILE = f"{PROCESSED_DIR}/val.parquet"
-TEST_FILE = f"{PROCESSED_DIR}/test.parquet"
-EDGES_FILE = f"{PROCESSED_DIR}/train_edges.parquet"
-GRAPH_FILE = f"{PROCESSED_DIR}/graph.pt"
+TRAIN_SET_FILE = f"{PROCESSED_DIR}/train.parquet"
+VAL_SET_FILE = f"{PROCESSED_DIR}/val.parquet"
+TEST_SET_FILE = f"{PROCESSED_DIR}/test.parquet"
+TRAIN_EDGES_FILE = f"{PROCESSED_DIR}/train_edges.parquet"
+TRAIN_GRAPH_FILE = f"{PROCESSED_DIR}/graph.pt"
 
 # List of single-event files
 RAW_DATA_FILES = [
@@ -62,6 +70,12 @@ RAW_DATA_FILES = [
     RAW_UNLIKES_FILE,
     RAW_UNDISLIKES_FILE
 ]
+
+# GNN save paths
+TRAINED_GNN = f"{GNN_MODEL}/best_model.pth"
+USER_EMBEDDINGS_GNN = f"{GNN_MODEL}/user_embeddings.pt"
+SONG_EMBEDDINGS_GNN = f"{GNN_MODEL}/song_embeddings.pt"
+
 
 # ------------------
 # DATA PREPROCESSING
@@ -88,33 +102,48 @@ WEIGHTS = {
     "undislikes": -1.0
 }
 
-# list of event types and their opposites
-OPPOSITE_EVENT_TYPES = [
-    {"table": "listens", "opposite": None},
-    {"table": "likes", "opposite": "unlikes"},
-    {"table": "unlikes", "opposite": None},
-    {"table": "dislikes", "opposite": "undislikes"},
-    {"table": "undislikes", "opposite": None},
-]
-
 # Train/val/test split ratios
 SPLIT_RATIOS = {
     "train": 0.8,
-    "val": 0.0,
-    "test": 0.2
+    "val": 0.1,
+    "test": 0.1
 }
 
 SPLIT_PATHS = {
-    "train": TRAIN_FILE,
-    "val": VAL_FILE,
-    "test": TEST_FILE
+    "train": TRAIN_SET_FILE,
+    "val": VAL_SET_FILE,
+    "test": TEST_SET_FILE
 }
 
 # -------------------
 # GNN HYPERPARAMETERS
 # -------------------
 
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+SEED = 42
+np.random.seed(SEED)
+torch.cuda.manual_seed_all(SEED)
 
+# GNN class parameters
+EMBED_DIM = 128               # node embedding dimension
+NUM_LAYERS = 3                # number of LightGCN layers
+INIT_STD = 0.1                # initial std for embedding initialization
+LAMBDA_ALIGN = 0.1            # weight for content/audio alignment loss
+FREEZE_AUDIO = True           # keep audio embeddings fixed
+
+
+# Edge weight MLP
+EDGE_MLP_HIDDEN_DIM = 32  # hidden dimension for edge weight MLP
+EDGE_MLP_INPUT_DIM = 4    # edge_type, edge_count, edge_avg_played_ratio, edge_weight_init
+
+# training
+LR = 0.001                    # learning rate
+NUM_EPOCHS = 50               # max epochs
+BATCH_SIZE = 1024             # BPR training batch size
+WEIGHT_DECAY = 1e-4           # optional L2 regularization on embeddings
+
+# GNN eval parameters
+K_HIT = 10                     # top-K for Hit@K metric
 
 # -------------------
 # ANN HYPERPARAMETERS

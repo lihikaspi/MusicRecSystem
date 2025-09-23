@@ -61,7 +61,7 @@ python run_all.py
 # Or run individual stages
 python run_all.py --stage 1  # Download dataset
 python run_all.py --stage 2  # Prepare data for GNN
-python run_all.py --stage 3  # Train GNN
+python run_all.py --stage 3  # Train and evaluate GNN
 python run_all.py --stage 4  # ANN search and evaluation
 ```
 
@@ -158,7 +158,7 @@ print(f"PyG version: {torch_geometric.__version__}")
 ├── run_all.py                # Main pipeline runner
 ├── download_data.py          # Dataset download script
 ├── run_GNN_prep.py           # GNN data preparation
-├── train_GNN.py              # GNN training
+├── run_GNN_train.py                # GNN training and evaluation
 ├── run_ANN_search.py         # ANN search and evaluation
 └── requirements.txt          # Python dependencies
 ```
@@ -254,7 +254,7 @@ python run_all.py --stage 4        # or --stage ann_search
 ```bash
 python download_data.py
 python run_GNN_prep.py
-python train_GNN.py
+python run_GNN_train.py
 python run_ANN_search.py
 ```
 
@@ -313,6 +313,14 @@ Process the interactions file (`event_processor.py`):
 - Encode user and song IDs to fit GNN requirements.
 - Split the interactions into train, validation, and test sets according to a given ratio.
 
+To save the intermediate filtered file replace the code with the following:
+```python
+# run_GNN_prep.py
+
+# processor.filter_events(INTERACTION_THRESHOLD)
+processor.filter_events(INTERACTION_THRESHOLD, INTERACTIONS_FILE)
+```
+
 Create the graph properties information (`edge_assembler.py`):
 
 - Aggregate the interactions into user-song-event records with interactions counter and average played ratio (for listen event).
@@ -320,6 +328,13 @@ Create the graph properties information (`edge_assembler.py`):
 - Add the artist and album IDs according to the mappings and encode them.
 - Turn the event names into categories.
 
+To save the intermediate ready-to-build edges file replace the code with the following:
+```python
+# run_GNN_prep.py
+
+# aggregator.assemble_edges()
+aggregator.assemble_edges(EDGES_FILE)
+```
 
 #### 2. Build Graph
 
@@ -355,7 +370,7 @@ Run the GNN training pipeline:
 python run_all.py --stage train_gnn
 
 # directly
-python train_GNN.py
+python run_GNN_train.py
 ```
 
 ### Stage 4: ANN search and retrieval

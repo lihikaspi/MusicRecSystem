@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from torch_geometric.utils import to_undirected
 
-from GNN_model.GNN_class import LightGCNWithContent
+from GNN_model.GNN_class_niv import LightGCNWithContent
 
 def seed_everything(seed=42):
     random.seed(seed); np.random.seed(seed)
