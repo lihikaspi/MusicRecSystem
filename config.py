@@ -141,6 +141,8 @@ LR = 0.001                    # learning rate
 NUM_EPOCHS = 50               # max epochs
 BATCH_SIZE = 1024             # BPR training batch size
 WEIGHT_DECAY = 1e-4           # optional L2 regularization on embeddings
+NUM_WORKERS = 4
+EVAL_EVERY = 5
 
 # GNN eval parameters
 K_HIT = 50                     # top-K for evaluation matrics

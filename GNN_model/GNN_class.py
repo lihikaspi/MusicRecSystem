@@ -14,11 +14,13 @@ class EdgeWeightMLP(nn.Module):
         self.mlp = nn.Sequential(
             nn.Linear(EDGE_MLP_INPUT_DIM, EDGE_MLP_HIDDEN_DIM),
             nn.ReLU(),
-            nn.Linear(EDGE_MLP_HIDDEN_DIM, 1)
+            nn.Linear(EDGE_MLP_HIDDEN_DIM, 1),
+            nn.Sigmoid()
         )
 
     def forward(self, edge_features):
         return self.mlp(edge_features).squeeze()
+
 
 class LightGCN(nn.Module):
     def __init__(self, data: HeteroData, lambda_align: float = 0.0):
@@ -42,13 +44,13 @@ class LightGCN(nn.Module):
 
         # Fixed audio embeddings
         self.register_buffer('item_audio_emb', data['item'].x)
-        # Optional linear projection to GCN space
         self.audio_proj = nn.Linear(data['item'].x.size(1), EMBED_DIM, bias=False)
 
         # ---------- Initialize embeddings ----------
-        nn.init.normal_(self.user_emb.weight, std=0.1)
-        nn.init.normal_(self.artist_emb.weight, std=0.1)
-        nn.init.normal_(self.album_emb.weight, std=0.1)
+        nn.init.xavier_uniform_(self.user_emb.weight)
+        nn.init.xavier_uniform_(self.artist_emb.weight)
+        nn.init.xavier_uniform_(self.album_emb.weight)
+        nn.init.xavier_uniform_(self.audio_proj.weight)
 
         # ---------- Edge MLP ----------
         self.edge_mlp = EdgeWeightMLP()
@@ -56,46 +58,55 @@ class LightGCN(nn.Module):
         # ---------- LGConv layers ----------
         self.convs = nn.ModuleList([LGConv() for _ in range(NUM_LAYERS)])
 
-        # ---------- Store graph ----------
-        self.edge_index = data['user', 'interacts', 'item'].edge_index
-        self.edge_attr = data['user', 'interacts', 'item'].edge_attr
-        self.edge_weight_init = data['user', 'interacts', 'item'].edge_weight_init
-        self.artist_ids = data['item'].artist_id
-        self.album_ids = data['item'].album_id
+        # ---------- Precompute static components ----------
+        self.register_buffer('edge_index', data['user', 'interacts', 'item'].edge_index)
+        self.register_buffer('edge_attr', data['user', 'interacts', 'item'].edge_attr)
+        self.register_buffer('edge_weight_init', data['user', 'interacts', 'item'].edge_weight_init)
+        self.register_buffer('artist_ids', data['item'].artist_id)
+        self.register_buffer('album_ids', data['item'].album_id)
 
-    def forward(self):
+        # Precompute edge features and adjusted edge indices
+        edge_features = torch.cat([self.edge_attr, self.edge_weight_init.unsqueeze(1)], dim=1)
+        self.register_buffer('edge_features', edge_features)
+
+        # Adjust edge_index for concatenated tensor (user offset = 0, item offset = num_users)
+        adjusted_edge_index = self.edge_index.clone()
+        adjusted_edge_index[1] += num_users
+        self.register_buffer('adjusted_edge_index', adjusted_edge_index)
+
+        self.num_users = num_users
+
+    def forward(self, return_projections=False):
         # ---------- Initial embeddings ----------
         user_h = self.user_emb.weight
-        item_h = self.item_audio_emb + self.artist_emb[self.artist_ids] + self.album_emb[self.album_ids]
+        item_h = self.item_audio_emb + self.artist_emb(self.artist_ids) + self.album_emb(self.album_ids)
 
-        # Optional projected audio for alignment
-        projected_audio = self.audio_proj(self.item_audio_emb)
+        # Optional projected audio for alignment (only compute if needed)
+        projected_audio = None
+        if self.lambda_align > 0 or return_projections:
+            projected_audio = self.audio_proj(self.item_audio_emb)
 
         # ---------- Compute edge weights ----------
-        edge_features = torch.cat([self.edge_attr, self.edge_weight_init.unsqueeze(1)], dim=1)
-        edge_weight = self.edge_mlp(edge_features)
+        edge_weight = self.edge_mlp(self.edge_features)
 
         # ---------- Concatenate for homogeneous LGConv ----------
         x = torch.cat([user_h, item_h], dim=0)
-        u_offset = 0
-        i_offset = user_h.size(0)
-
-        # Adjust edge_index for concatenated tensor
-        edge_index = self.edge_index.clone()
-        # user indices are fine, item indices need offset
-        edge_index[1] += i_offset
 
         # ---------- Propagation ----------
         xs = [x]
         for conv in self.convs:
-            x = conv(x, edge_index, edge_weight=edge_weight)
+            x = conv(x, self.adjusted_edge_index, edge_weight=edge_weight)
             xs.append(x)
-        x_final = torch.stack(xs, dim=0).mean(dim=0)
 
-        final_user_h = x_final[u_offset:i_offset]
-        final_item_h = x_final[i_offset:]
+        # Use learnable combination weights instead of simple mean
+        x_final = torch.stack(xs, dim=0).mean(dim=0)  # Can be replaced with learnable weights
+
+        final_user_h = x_final[:self.num_users]
+        final_item_h = x_final[self.num_users:]
 
         # ---------- Optional alignment loss ----------
-        align_loss = F.mse_loss(final_item_h, projected_audio) if self.lambda_align > 0 else torch.tensor(0.0, device=x.device)
+        align_loss = torch.tensor(0.0, device=x.device)
+        if self.lambda_align > 0 and projected_audio is not None:
+            align_loss = F.mse_loss(final_item_h, projected_audio)
 
         return final_user_h, final_item_h, align_loss

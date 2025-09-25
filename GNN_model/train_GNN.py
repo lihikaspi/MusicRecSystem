@@ -8,36 +8,57 @@ from GNN_model.GNN_class import LightGCN
 from GNN_model.eval_GNN import GNNEvaluator
 
 
-# -------------------------------
 # BPR Dataset
-# -------------------------------
 class BPRDataset(Dataset):
     """
     Dataset for BPR training.
     Performs negative sampling on the fly.
     """
-    def __init__(self, interactions, num_items):
+    def __init__(self, interactions, num_items, neg_samples_per_pos=5):
         self.user_item = interactions
         self.num_items = num_items
+        self.neg_samples_per_pos = neg_samples_per_pos
+
         self.user2items = {}
         for u, i in interactions:
             self.user2items.setdefault(u, set()).add(i)
+
+        # Precompute some negative samples to reduce online computation
+        self.precomputed_negatives = {}
+        self._precompute_negatives()
+
+    def _precompute_negatives(self):
+        """ Precompute negative samples for each user """
+        for user, pos_items in self.user2items.items():
+            neg_pool = []
+            attempts = 0
+            while len(neg_pool) < self.neg_samples_per_pos * 100 and attempts < 1000:  # Safety limit
+                candidate = np.random.randint(0, self.num_items)
+                if candidate not in pos_items:
+                    neg_pool.append(candidate)
+                attempts += 1
+            self.precomputed_negatives[user] = neg_pool
 
     def __len__(self):
         return len(self.user_item)
 
     def __getitem__(self, idx):
         u, i_pos = self.user_item[idx]
-        # Negative sampling: pick an item not seen by user
-        while True:
-            i_neg = np.random.randint(0, self.num_items)
-            if i_neg not in self.user2items[u]:
-                break
+
+        # Use precomputed negatives when available
+        if u in self.precomputed_negatives and self.precomputed_negatives[u]:
+            i_neg = self.precomputed_negatives[u].pop()
+        else:
+            # Fallback to online sampling
+            while True:
+                i_neg = np.random.randint(0, self.num_items)
+                if i_neg not in self.user2items[u]:
+                    break
+
         return u, i_pos, i_neg
 
-# -------------------------------
+
 # Trainer class
-# -------------------------------
 class GNNTrainer:
     def __init__(
         self,
@@ -48,7 +69,9 @@ class GNNTrainer:
         batch_size: int,
         lr: float,
         lambda_align: float,
-        event_map: dict
+        event_map: dict,
+        num_workers: int,
+        weight_decay: float
     ):
         """
         Args:
@@ -61,7 +84,7 @@ class GNNTrainer:
             lambda_align: weight for alignment loss
         """
         self.model = model.to(device)
-        self.train_graph = train_graph
+        self.train_graph = train_graph.to(device)
         self.device = device
         self.batch_size = batch_size
         self.lr = lr
@@ -77,12 +100,29 @@ class GNNTrainer:
         train_edges = np.stack([user_idx, item_idx], axis=1)
 
         self.dataset = BPRDataset(train_edges, self.num_items)
-        self.loader = DataLoader(self.dataset, batch_size=batch_size, shuffle=True)
+        self.loader = DataLoader(
+            self.dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=num_workers,
+            pin_memory=True if device == 'cuda' else False
+        )
 
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
+        self.optimizer = torch.optim.AdamW(
+            self.model.parameters(),
+            lr=self.lr,
+            weight_decay=weight_decay
+        )
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            self.optimizer, mode='max', factor=0.5, patience=3, verbose=True
+        )
 
         self.evaluator = GNNEvaluator(self.model, self.train_graph, device, event_map)
         self.val_parquet = val_parquet
+
+        # Cache embeddings computation
+        self._cached_embeddings = None
+        self._cache_valid = False
 
     @staticmethod
     def _load_interactions(parquet_path: str):
@@ -95,22 +135,41 @@ class GNNTrainer:
         neg_score = (u_emb * neg_emb).sum(dim=1)
         return torch.nn.functional.softplus(-(pos_score - neg_score)).mean()
 
+    def _get_embeddings(self):
+        """ Get embeddings with caching for efficiency during evaluation """
+        if not self._cache_valid or self._cached_embeddings is None:
+            self.model.eval()
+            with torch.no_grad():
+                user_emb, item_emb, _ = self.model()
+                self._cached_embeddings = (user_emb, item_emb)
+                self._cache_valid = True
+        return self._cached_embeddings
+
     # Training loop
-    def train(self, num_epochs: int, save_path: str, k_hit: int):
-        self.model.train()
+    def train(self, num_epochs: int, save_path: str, k_hit: int, eval_every: int):
         best_ndcg = 0.0
+
+        # Compile model for PyTorch 2.0+ if available
+        if hasattr(torch, 'compile'):
+            self.model = torch.compile(self.model)
 
         for epoch in range(1, num_epochs + 1):
             self.model.train()
+            self._cache_valid = False  # Invalidate cache when training
+
             total_loss = 0
+            num_batches = 0
             progress = tqdm(self.loader, desc=f"Epoch {epoch}", leave=False)
 
             for batch in progress:
-                u_idx, i_pos_idx, i_neg_idx = [torch.tensor(x, device=self.device) for x in batch]
+                u_idx, i_pos_idx, i_neg_idx = [
+                    torch.tensor(x, device=self.device, non_blocking=True)
+                    for x in batch
+                ]
                 self.optimizer.zero_grad()
 
                 # Forward pass on the full train graph
-                user_emb, item_emb, align_loss = self.model(self.train_graph)
+                user_emb, item_emb, align_loss = self.model()
 
                 u_emb = user_emb[u_idx]
                 i_pos_emb = item_emb[i_pos_idx]
@@ -120,28 +179,38 @@ class GNNTrainer:
                 loss = loss_bpr + self.lambda_align * align_loss
 
                 loss.backward()
+
+                # Gradient clipping for stability
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+
                 self.optimizer.step()
 
-                total_loss += loss.item() * len(u_idx)
-                progress.set_postfix({"loss": total_loss / ((progress.n+1)*self.batch_size)})
+                total_loss += loss.item()
+                num_batches += 1
 
-            avg_loss = total_loss / len(self.dataset)
+                if num_batches % 100 == 0:  # Update progress less frequently
+                    progress.set_postfix({"loss": total_loss / num_batches})
+
+            avg_loss = total_loss / num_batches
             print(f"Epoch {epoch} - Train Loss: {avg_loss:.4f}")
 
-            # Validation
-            metrics = self.evaluator.evaluate(self.val_parquet, k=k_hit)
+            # Evaluate less frequently to speed up training
+            if epoch % eval_every == 0 or epoch == num_epochs:
+                metrics = self.evaluator.evaluate(self.val_parquet, k=k_hit)
 
-            # Logging
-            print(
-                f"NDCG@{k_hit}={metrics['ndcg@k']:.4f} "
-                f"| Hit@{k_hit} (like)={metrics['hit_like@k']:.4f} "
-                f"| Hit@{k_hit} (like+listen)={metrics['hit_like_listen@k']:.4f} "
-                f"| AUC={metrics['auc']:.4f} "
-                f"| Dislike-FPR@{k_hit}={metrics['dislike_fpr@k']:.4f}"
-            )
+                print(
+                    f"NDCG@{k_hit}={metrics['ndcg@k']:.4f} "
+                    f"| Hit@{k_hit} (like)={metrics['hit_like@k']:.4f} "
+                    f"| Hit@{k_hit} (like+listen)={metrics['hit_like_listen@k']:.4f} "
+                    f"| AUC={metrics['auc']:.4f} "
+                    f"| Dislike-FPR@{k_hit}={metrics['dislike_fpr@k']:.4f}"
+                )
 
-            # ---- Optional: checkpoint based on metric ----
-            if metrics['ndcg@k'] > best_ndcg:
-                torch.save(self.model.state_dict(), save_path)
-                best_ndcg = metrics['ndcg@k']
-                print("Saved best model based on NDCG@K")
+                # Update learning rate
+                self.scheduler.step(metrics['ndcg@k'])
+
+                # Save best model
+                if metrics['ndcg@k'] > best_ndcg:
+                    torch.save(self.model.state_dict(), save_path)
+                    best_ndcg = metrics['ndcg@k']
+                    print(f"Saved best model (NDCG@{k_hit}: {best_ndcg:.4f})")
