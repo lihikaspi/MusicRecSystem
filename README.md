@@ -20,7 +20,9 @@ Created By: Lihi Kaspi, Harel Oved & Niv Maman
    - [Stage 2: Preparing the Data for the GNN](#stage-2-preparing-the-data-for-the-gnn)
      - [1. Data Preprocessing](#1-data-preprocessing)
      - [2. Build Graph](#2-build-graph)
-   - [Stage 3: GNN Modeling and Training](#stage-3-gnn-modeling-and-training)
+   - [Stage 3: Training and Evaluating the GNN](#stage-3-training-and-evaluating-the-gnn)
+     - [1. Training](#1-training)
+     - [2. Evaluation](#2-evaluation)
    - [Stage 4: ANN Search and Retrieval](#stage-4-ann-search-and-retrieval)
      - [1. ANN Indexing and Retrieval](#1-ann-indexing-and-retrieval)
      - [2. Retrieval Evaluation](#2-retrieval-evaluation)
@@ -154,55 +156,65 @@ print(f"PyG version: {torch_geometric.__version__}")
 
 ### Core Scripts
 ```
-├── config.py                 # Configuration and hyperparameters
-├── run_all.py                # Main pipeline runner
-├── download_data.py          # Dataset download script
-├── run_GNN_prep.py           # GNN data preparation
-├── run_GNN_train.py                # GNN training and evaluation
-├── run_ANN_search.py         # ANN search and evaluation
-└── requirements.txt          # Python dependencies
+├── config.py                   # Configuration and hyperparameters
+├── run_all.py                  # Main pipeline runner
+├── download_data.py            # Dataset download script
+├── run_GNN_prep.py             # GNN data preparation
+├── run_GNN_train.py            # GNN training and evaluation
+├── run_ANN_search.py           # ANN search and evaluation
+└── requirements.txt            # Python dependencies
 ```
 
 ### Data Processing (`GNN_prep/`)
 ```
-├── event_processor.py        # Interaction data preprocessing
-├── edge_assembler.py         # Graph edge creation and aggregation
-└── build_graph.py            # Graph construction for GNN
+├── event_processor.py          # Interaction data preprocessing
+├── edge_assembler.py           # Graph edge creation and aggregation
+└── build_graph.py              # Graph construction for GNN
 ```
 
 ### GNN Modeling (`GNN_model/`)
 ```
-└── GNN_class.py              # Graph Neural Network implementation
+├── GNN_class.py                # Graph Neural Network implementation
+├── train_GNN.py                # GNN training class
+├── eval_GNN.py                 # GNN evaluation class
+├── user_embeddings.pt          # User embeddings from the GNN
+├── song_embeddings.pt          # Song embeddings from the GNN
+└── best_model.pt               # Best model checkpoint
 ```
 
 ### ANN Search (`ANN_search/`)
 ```
-├── ANN_index_recs.py         # ANN indexing and recommendation
-└── ANN_eval.py               # Recommendation evaluation metrics
+├── ANN_index_recs.py           # ANN indexing and recommendation
+└── ANN_eval.py                 # Recommendation evaluation metrics
 ```
 
 ### Processed Data (`processed_data/`)
 ```
-├── interactions.parquet      # Processed interactions data (optional)
-├── train.parquet             # Training set
-├── val.parquet               # Validation set
-├── test.parquet              # Test set
-├── train_edges.parquet       # Training edges (optional)
-└── graph.pt                  # PyTorch graph object
+├── interactions.parquet        # Processed interactions data (optional)
+├── train.parquet               # Training set
+├── val.parquet                 # Validation set
+├── test.parquet                # Test set
+├── train_edges.parquet         # Training edges (optional)
+└── graph.pt                    # PyTorch graph object
 ```
 
 ### Project Data (`project_data/`)
 ```
-├── download_yambda.py        # Yambda dataset wrapper
-├── yambda_inspect.py         # Dataset inspection utility
-├── yambda_stats.py           # Dataset statistics generator
-└── YambdaData50m/            # Raw dataset directory
-    ├── multi_event.parquet
-    ├── embeddings.parquet
-    ├── album_mapping.parquet
-    ├── artist_mapping.parquet
-    ├── yambda_columns.csv
-    └── YambdaStats_50m.csv
+├── download_yambda.py          # Yambda dataset wrapper
+├── yambda_inspect.py           # Dataset inspection utility
+├── yambda_stats.py             # Dataset statistics generator
+└── YambdaData50m/              # Raw dataset directory
+    ├── multi_event.parquet     # unified table with all the interaction types
+    ├── listens.parquet         # listens event interactions (optional)
+    ├── likes.parquet           # likes event interactions (optional)
+    ├── dislikes.parquet        # dislikes event interactions (optional)
+    ├── unlikes.parquet         # unlikes event interactions (optional)
+    ├── undislikes.parquet      # undislikes event interactions (optional)
+    ├── embeddings.parquet      # pre-computed audio embeddings
+    ├── album_mapping.parquet   # song-album mapping
+    ├── artist_mapping.parquet  # song-artist mapping
+    ├── yambda_columns.csv      # column names of each data file and first row
+    └── YambdaStats_50m.csv     # basic statistics for each interaction file
 ```
 
 ---
@@ -246,7 +258,7 @@ python run_all.py
 ```bash
 python run_all.py --stage 1        # or --stage download
 python run_all.py --stage 2        # or --stage gnn_prep
-python run_all.py --stage 3        # or --stage train_gnn
+python run_all.py --stage 3        # or --stage gnn_train
 python run_all.py --stage 4        # or --stage ann_search
 ```
 
@@ -307,7 +319,7 @@ python run_GNN_prep.py
 
 #### 1. Data Preprocessing
 
-Process the interactions file (`event_processor.py`):
+Process the interactions file (`EventProcessor` defined in `event_processor.py`):
 
 - Filter out users with less interaction than a given threshold and songs without audio embeddings.
 - Encode user and song IDs to fit GNN requirements.
@@ -321,7 +333,7 @@ To save the intermediate filtered file replace the code with the following:
 processor.filter_events(INTERACTION_THRESHOLD, INTERACTIONS_FILE)
 ```
 
-Create the graph properties information (`edge_assembler.py`):
+Create the graph properties information (`EdgeAssembler` defined in `edge_assembler.py`):
 
 - Aggregate the interactions into user-song-event records with interactions counter and average played ratio (for listen event).
 - Add event-type fixed weights to act as initial values for the learnable weights in the GNN.
@@ -338,7 +350,7 @@ aggregator.assemble_edges(EDGES_FILE)
 
 #### 2. Build Graph
 
-Construct the graph for the GNN (`build_graph.py`):
+Construct the graph for the GNN (`GraphBuilder` defined in `build_graph.py`):
 
 - Build the graph structure: bipartite graph with users and songs as nodes and the aggregated event-type interactions as edges.
 - Edges attributes: event type, interactions counter, average played ratio. 
@@ -347,7 +359,7 @@ Construct the graph for the GNN (`build_graph.py`):
 - Song nodes attributes: pre-computed embeddings as node features and encoded album and artist IDs to act as initial value for the learnable embedding
 - Saves the graph as a PyTorch file `graph.pt`.
 
-The save paths and hyperparameter such as the interaction threshold and split ratio can be found in the `config.py` file. 
+The save paths and hyperparameters such as the interaction threshold and split ratio can be found in the `config.py` file. 
 Example:
 
 ```python
@@ -358,12 +370,12 @@ SPLIT_RATIOS = {
     "test": 0.2
 }
 PROCESSED_DIR = "processed_data"
-GRAPH_FILE = f"{PROCESSED_DIR}/graph.pt"
+TRAIN_GRAPH_FILE = f"{PROCESSED_DIR}/graph.pt"
 ```
 
-### Stage 3: GNN modeling and training
+### Stage 3: Training and Evaluating the GNN
 
-Run the GNN training pipeline:
+Run the GNN training and evaluation pipeline:
 
 ```bash
 # via the top-level runner (recommended)
@@ -371,6 +383,52 @@ python run_all.py --stage train_gnn
 
 # directly
 python run_GNN_train.py
+```
+
+#### 1. Training
+
+Construct the model (`LightGCN` defined in `GNN_class.py`) and train it on the prepared graph (`GNNTrainer` defined in `train_GNN.py`):
+
+- Model: **LightGCN with weighted edges** to capture different event types.
+- Fixed audio embeddings for songs; learnable embeddings for users, artists, albums.
+- Edge weights initialized with fixed values set in the previous stage and updated during training.
+- Loss: BPR loss with optional L2 regularization.
+- Optimizer: Adam with hyperparameters from `config.py`.
+- Training loop:
+  - Batches of users and negative samples (if used).  
+  - Validation using the `GNNEvaluator` class after each epoch.  
+  - Checkpoint saved when validation NDCG@K improves.
+- The best model checkpoint is saved to `TRAINED_GNN` during training based on validation NDCG@K.
+
+#### 2. Evaluation
+
+Evaluate the model using the validation set during training, and the test set on the final model (`GNNEvaluator` defined in `eval_GNN.py`):
+
+- The `GNNEvaluator` class is used for validation and test evaluation.
+- Handles collapsing multiple events per `(user, item)` to the latest timestamp.
+- Maps events to relevance labels:
+  - `like=2`, `listen=1`, `unlike/undislike=0`, `dislike=-1`
+- Metrics:
+  - **NDCG@K** (graded relevance)  
+  - **Hit@K** (like-only and like+listen)  
+  - **AUC** (likes+listens vs dislikes)  
+  - **Dislike-FPR@K**
+- Evaluation automatically sets the model to `eval()` mode and disables gradients.
+
+The save paths and hyperparameters for the GNN can be found in the `config.py` file. 
+Example:
+
+```python
+EMBED_DIM = 128
+NUM_LAYERS = 3
+LR = 0.001
+BATCH_SIZE = 1024
+NUM_EPOCHS = 20
+K_HIT = 50
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+GNN_MODEL = "GNN_model"
+TRAINED_GNN = f"{GNN_MODEL}/best_model.pth"
 ```
 
 ### Stage 4: ANN search and retrieval

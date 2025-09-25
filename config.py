@@ -21,7 +21,7 @@ DOWNLOAD_FULL_DATASET = False
 STAGE_FILES = [
     ("download", "download_data.py"),
     ("gnn_prep", "run_GNN_prep.py"),
-    ("train_gnn", "run_GNN_train.py"),
+    ("gnn_train", "run_GNN_train.py"),
     ("ann_search", "run_ANN_search.py"),
 ]
 
@@ -143,7 +143,7 @@ BATCH_SIZE = 1024             # BPR training batch size
 WEIGHT_DECAY = 1e-4           # optional L2 regularization on embeddings
 
 # GNN eval parameters
-K_HIT = 10                     # top-K for Hit@K metric
+K_HIT = 50                     # top-K for evaluation matrics
 
 # Event label mapping for evaluation
 EVAL_EVENT_MAP = {
