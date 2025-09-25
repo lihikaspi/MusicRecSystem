@@ -1,12 +1,12 @@
 import torch
-import pyarrow.parquet as pq
 from GNN_model.train_GNN import GNNTrainer
 from GNN_model.GNN_class import LightGCN
+from GNN_model.eval_GNN import GNNEvaluator
 from config import (
     TRAIN_GRAPH_FILE, VAL_SET_FILE, TEST_SET_FILE, TRAINED_GNN, USER_EMBEDDINGS_GNN,
-    SONG_EMBEDDINGS_GNN, DEVICE, BATCH_SIZE, LR, NUM_EPOCHS, LAMBDA_ALIGN, K_HIT
+    SONG_EMBEDDINGS_GNN, DEVICE, BATCH_SIZE, LR, NUM_EPOCHS, LAMBDA_ALIGN, K_HIT, EVAL_EVENT_MAP
 )
-from GNN_model.eval_GNN import evaluate_model  # Should implement Hit@K evaluation
+
 
 def main():
     # Step 1: Load train graph
@@ -35,15 +35,19 @@ def main():
     # Step 5: Load best model & evaluate on test set
     print("Loading best model for evaluation...")
     model.load_state_dict(torch.load(TRAINED_GNN, map_location=DEVICE))
-    model.eval()
-
-    print("Loading test interactions...")
-    test_df = pq.read_table(TEST_SET_FILE).to_pandas()
-    test_interactions = test_df[['user_idx', 'item_idx', 'event_type']].to_numpy()
 
     print("Evaluating on test set...")
-    hit_k = evaluate_model(model, test_interactions, k=K_HIT)
-    print(f"Hit@{K_HIT} on test set: {hit_k:.4f}")
+    test_evaluator = GNNEvaluator(model, train_graph, DEVICE, EVAL_EVENT_MAP)
+
+    # Evaluate using the test parquet file
+    test_metrics = test_evaluator.evaluate(TEST_SET_FILE, k=K_HIT)
+
+    print(f"Test set metrics @K={K_HIT}:")
+    print(f"  NDCG@{K_HIT}: {test_metrics['ndcg@k']:.4f}")
+    print(f"  Hit@{K_HIT} (like only): {test_metrics['hit_like@k']:.4f}")
+    print(f"  Hit@{K_HIT} (like+listen): {test_metrics['hit_like_listen@k']:.4f}")
+    print(f"  AUC: {test_metrics['auc']:.4f}")
+    print(f"  Dislike-FPR@{K_HIT}: {test_metrics['dislike_fpr@k']:.4f}")
 
     # Step 6: Save final embeddings
     print("Saving user and item embeddings...")

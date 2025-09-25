@@ -2,9 +2,11 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
 import pyarrow.parquet as pq
+from torch_geometric.data import HeteroData
 from tqdm import tqdm
 from GNN_model.GNN_class import LightGCN
-from GNN_model.eval_GNN import evaluate_model
+from GNN_model.eval_GNN import GNNEvaluator
+
 
 # -------------------------------
 # BPR Dataset
@@ -40,12 +42,13 @@ class GNNTrainer:
     def __init__(
         self,
         model: LightGCN,
-        train_graph,
+        train_graph: HeteroData,
         val_parquet: str,
         device: str,
         batch_size: int,
         lr: float,
-        lambda_align: float
+        lambda_align: float,
+        event_map: dict
     ):
         """
         Args:
@@ -78,6 +81,9 @@ class GNNTrainer:
 
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
 
+        self.evaluator = GNNEvaluator(self.model, self.train_graph, device, event_map)
+        self.val_parquet = val_parquet
+
     @staticmethod
     def _load_interactions(parquet_path: str):
         df = pq.read_table(parquet_path).to_pandas()
@@ -89,11 +95,10 @@ class GNNTrainer:
         neg_score = (u_emb * neg_emb).sum(dim=1)
         return torch.nn.functional.softplus(-(pos_score - neg_score)).mean()
 
-    # -------------------------------
     # Training loop
-    # -------------------------------
     def train(self, num_epochs: int, save_path: str, k_hit: int):
-        best_hr = 0.0
+        self.model.train()
+        best_ndcg = 0.0
 
         for epoch in range(1, num_epochs + 1):
             self.model.train()
@@ -123,13 +128,20 @@ class GNNTrainer:
             avg_loss = total_loss / len(self.dataset)
             print(f"Epoch {epoch} - Train Loss: {avg_loss:.4f}")
 
-            # -------------------------------
             # Validation
-            # -------------------------------
-            hr = evaluate_model(self.model, self.val_interactions, k=k_hit)
+            metrics = self.evaluator.evaluate(self.val_parquet, k=k_hit)
 
-            # Save best model
-            if hr > best_hr:
-                best_hr = hr
+            # Logging
+            print(
+                f"NDCG@{k_hit}={metrics['ndcg@k']:.4f} "
+                f"| Hit@{k_hit} (like)={metrics['hit_like@k']:.4f} "
+                f"| Hit@{k_hit} (like+listen)={metrics['hit_like_listen@k']:.4f} "
+                f"| AUC={metrics['auc']:.4f} "
+                f"| Dislike-FPR@{k_hit}={metrics['dislike_fpr@k']:.4f}"
+            )
+
+            # ---- Optional: checkpoint based on metric ----
+            if metrics['ndcg@k'] > best_ndcg:
                 torch.save(self.model.state_dict(), save_path)
-                print(f"Saved best model at epoch {epoch} with Hit@{k_hit}={hr:.4f}")
+                best_ndcg = metrics['ndcg@k']
+                print("Saved best model based on NDCG@K")

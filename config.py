@@ -145,6 +145,15 @@ WEIGHT_DECAY = 1e-4           # optional L2 regularization on embeddings
 # GNN eval parameters
 K_HIT = 10                     # top-K for Hit@K metric
 
+# Event label mapping for evaluation
+EVAL_EVENT_MAP = {
+    "like": 2,        # strong positive
+    "listen": 1,      # weak positive
+    "unlike": 0,      # neutral (revoked like)
+    "dislike": -1,    # explicit negative
+    "undislike": 0    # neutral (revoked dislike)
+}
+
 # -------------------
 # ANN HYPERPARAMETERS
 # -------------------
