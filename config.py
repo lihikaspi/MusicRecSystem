@@ -1,172 +1,190 @@
-import numpy as np
+from dataclasses import dataclass, field
 import torch
-
-# -------
-# DATASET
-# -------
-
-# Dataset settings
-DATASET_SIZE = "50m"  # Options: "50m", "500m", "5b"
-DATASET_TYPE = "flat" # options: "flat", "sequential"
-
-# Flag to download full dataset or only essential files
-# True = download everything, False = only multi_event + embeddings + mappings
-DOWNLOAD_FULL_DATASET = False
-
-# --------
-# PIPELINE
-# --------
-
-# Ordered pipeline (name → file)
-STAGE_FILES = [
-    ("download", "download_data.py"),
-    ("gnn_prep", "run_GNN_prep.py"),
-    ("gnn_train", "run_GNN_train.py"),
-    ("ann_search", "run_ANN_search.py"),
-]
-
-# ---------------------
-# PATHS AND DIRECTORIES
-# ---------------------
-
-# Save directories
-DATA_DIR = f"project_data/YambdaData{DATASET_SIZE}/"
-PROCESSED_DIR = "processed_data"
-GNN_MODEL = "GNN_model"
-RECS_DIR = "recs"
-
-# Data additional CSVs
-DATA_COLS_FILE = f"{DATA_DIR}/yambda_columns.csv"
-DATA_STATS_FILE = f"{DATA_DIR}/YambdaStats_{DATASET_SIZE}.csv"
-
-# Raw interaction files
-RAW_LISTENS_FILE = f"{DATA_DIR}/listens.parquet"
-RAW_LIKES_FILE = f"{DATA_DIR}/likes.parquet"
-RAW_DISLIKES_FILE = f"{DATA_DIR}/dislikes.parquet"
-RAW_UNLIKES_FILE = f"{DATA_DIR}/unlikes.parquet"
-RAW_UNDISLIKES_FILE = f"{DATA_DIR}/undislikes.parquet"
-RAW_MULTI_EVENT_FILE = f"{DATA_DIR}/multi_event.parquet"
-
-# Raw embeddings
-AUDIO_EMBEDDINGS_FILE = f"{DATA_DIR}/embeddings.parquet"
-
-# Mappings
-ALBUM_MAPPING_FILE = f"{DATA_DIR}/album_mapping.parquet"
-ARTIST_MAPPING_FILE = f"{DATA_DIR}/artist_mapping.parquet"
-
-# Processed files
-INTERACTIONS_FILE = f"{PROCESSED_DIR}/interactions.parquet"
-TRAIN_SET_FILE = f"{PROCESSED_DIR}/train.parquet"
-VAL_SET_FILE = f"{PROCESSED_DIR}/val.parquet"
-TEST_SET_FILE = f"{PROCESSED_DIR}/test.parquet"
-TRAIN_EDGES_FILE = f"{PROCESSED_DIR}/train_edges.parquet"
-TRAIN_GRAPH_FILE = f"{PROCESSED_DIR}/graph.pt"
-
-# List of single-event files
-RAW_DATA_FILES = [
-    RAW_LISTENS_FILE,
-    RAW_LIKES_FILE,
-    RAW_DISLIKES_FILE,
-    RAW_UNLIKES_FILE,
-    RAW_UNDISLIKES_FILE
-]
-
-# GNN save paths
-TRAINED_GNN = f"{GNN_MODEL}/best_model.pth"
-USER_EMBEDDINGS_GNN = f"{GNN_MODEL}/user_embeddings.pt"
-SONG_EMBEDDINGS_GNN = f"{GNN_MODEL}/song_embeddings.pt"
-
-
-# ------------------
-# DATA PREPROCESSING
-# ------------------
-
-# Mapping edge type names to integer IDs
-EDGE_TYPE_MAPPING = {
-    "listen": 1,
-    "like": 2,
-    "dislike": 3,
-    "unlike": 4,
-    "undislike": 5
-}
-
-# user interaction threshold
-INTERACTION_THRESHOLD = 5
-
-# event type Weights
-WEIGHTS = {
-    "listens": 1.0,
-    "likes": 3.0,
-    "dislikes": -3.0,
-    "unlikes": -1.0,
-    "undislikes": -1.0
-}
-
-# Train/val/test split ratios
-SPLIT_RATIOS = {
-    "train": 0.8,
-    "val": 0.1,
-    "test": 0.1
-}
-
-SPLIT_PATHS = {
-    "train": TRAIN_SET_FILE,
-    "val": VAL_SET_FILE,
-    "test": TEST_SET_FILE
-}
+from typing import List, Tuple, Dict
 
 # -------------------
-# GNN HYPERPARAMETERS
+# DATASET CONFIG
 # -------------------
+@dataclass
+class DatasetConfig:
+    dataset_size: str = "50m"          # Options: "50m", "500m", "5b"
+    dataset_type: str = "flat"         # Options: "flat", "sequential"
+    download_full: bool = False        # True = download everything, False = only essentials
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-SEED = 42
-np.random.seed(SEED)
-torch.cuda.manual_seed_all(SEED)
-
-# GNN class parameters
-EMBED_DIM = 128               # node embedding dimension
-NUM_LAYERS = 3                # number of LightGCN layers
-INIT_STD = 0.1                # initial std for embedding initialization
-LAMBDA_ALIGN = 0.1            # weight for content/audio alignment loss
-FREEZE_AUDIO = True           # keep audio embeddings fixed
-
-
-# Edge weight MLP
-EDGE_MLP_HIDDEN_DIM = 32  # hidden dimension for edge weight MLP
-EDGE_MLP_INPUT_DIM = 4    # edge_type, edge_count, edge_avg_played_ratio, edge_weight_init
-
-# training
-LR = 0.001                    # learning rate
-NUM_EPOCHS = 50               # max epochs
-BATCH_SIZE = 1024             # BPR training batch size
-WEIGHT_DECAY = 1e-4           # optional L2 regularization on embeddings
-NUM_WORKERS = 4
-EVAL_EVERY = 5
-
-# GNN eval parameters
-K_HIT = 50                     # top-K for evaluation matrics
-
-# Event label mapping for evaluation
-EVAL_EVENT_MAP = {
-    "like": 2,        # strong positive
-    "listen": 1,      # weak positive
-    "unlike": 0,      # neutral (revoked like)
-    "dislike": -1,    # explicit negative
-    "undislike": 0    # neutral (revoked dislike)
-}
 
 # -------------------
-# ANN HYPERPARAMETERS
+# PIPELINE CONFIG
 # -------------------
+@dataclass
+class PipelineConfig:
+    stage_files: List[Tuple[str, str]] = field(default_factory=lambda: [
+        ("download", "download_data.py"),
+        ("gnn_prep", "run_GNN_prep.py"),
+        ("gnn_train", "run_GNN_train.py"),
+        ("ann_search", "run_ANN_search.py"),
+    ])
 
-# ANN top-k results
-TOP_K = 10
+
+# -------------------
+# PATHS CONFIG
+# -------------------
+@dataclass
+class PathsConfig:
+    dataset_size: str = "50m"
+    data_dir: str = field(init=False)
+    processed_dir: str = "processed_data"
+    gnn_model: str = "GNN_model"
+    recs_dir: str = "recs"
+
+    data_cols_file: str = field(init=False)
+    data_stats_file: str = field(init=False)
+
+    raw_listens_file: str = field(init=False)
+    raw_likes_file: str = field(init=False)
+    raw_dislikes_file: str = field(init=False)
+    raw_unlikes_file: str = field(init=False)
+    raw_undislikes_file: str = field(init=False)
+    raw_multi_event_file: str = field(init=False)
+
+    audio_embeddings_file: str = field(init=False)
+
+    album_mapping_file: str = field(init=False)
+    artist_mapping_file: str = field(init=False)
+
+    interactions_file: str = field(init=False)
+    train_set_file: str = field(init=False)
+    val_set_file: str = field(init=False)
+    test_set_file: str = field(init=False)
+    train_edges_file: str = field(init=False)
+    train_graph_file: str = field(init=False)
+
+    raw_data_files: List[str] = field(init=False)
+
+    trained_gnn: str = field(init=False)
+    user_embeddings_gnn: str = field(init=False)
+    song_embeddings_gnn: str = field(init=False)
+
+    def __post_init__(self):
+        self.data_dir = f"project_data/YambdaData{self.dataset_size}/"
+        self.data_cols_file = f"{self.data_dir}/yambda_columns.csv"
+        self.data_stats_file = f"{self.data_dir}/YambdaStats_{self.dataset_size}.csv"
+
+        self.raw_listens_file = f"{self.data_dir}/listens.parquet"
+        self.raw_likes_file = f"{self.data_dir}/likes.parquet"
+        self.raw_dislikes_file = f"{self.data_dir}/dislikes.parquet"
+        self.raw_unlikes_file = f"{self.data_dir}/unlikes.parquet"
+        self.raw_undislikes_file = f"{self.data_dir}/undislikes.parquet"
+        self.raw_multi_event_file = f"{self.data_dir}/multi_event.parquet"
+
+        self.audio_embeddings_file = f"{self.data_dir}/embeddings.parquet"
+
+        self.album_mapping_file = f"{self.data_dir}/album_mapping.parquet"
+        self.artist_mapping_file = f"{self.data_dir}/artist_mapping.parquet"
+
+        self.interactions_file = f"{self.processed_dir}/interactions.parquet"
+        self.train_set_file = f"{self.processed_dir}/train.parquet"
+        self.val_set_file = f"{self.processed_dir}/val.parquet"
+        self.test_set_file = f"{self.processed_dir}/test.parquet"
+        self.train_edges_file = f"{self.processed_dir}/train_edges.parquet"
+        self.train_graph_file = f"{self.processed_dir}/graph.pt"
+
+        self.raw_data_files = [
+            self.raw_listens_file,
+            self.raw_likes_file,
+            self.raw_dislikes_file,
+            self.raw_unlikes_file,
+            self.raw_undislikes_file
+        ]
+
+        self.trained_gnn = f"{self.gnn_model}/best_model.pth"
+        self.user_embeddings_gnn = f"{self.gnn_model}/user_embeddings.pt"
+        self.song_embeddings_gnn = f"{self.gnn_model}/song_embeddings.pt"
 
 
+# -------------------
+# PREPROCESSING CONFIG
+# -------------------
+@dataclass
+class PreprocessingConfig:
+    edge_type_mapping: Dict[str, int] = field(default_factory=lambda: {
+        "listen": 1,
+        "like": 2,
+        "dislike": 3,
+        "unlike": 4,
+        "undislike": 5
+    })
+    interaction_threshold: int = 5
+    weights: Dict[str, float] = field(default_factory=lambda: {
+        "listens": 1.0,
+        "likes": 3.0,
+        "dislikes": -3.0,
+        "unlikes": -1.0,
+        "undislikes": -1.0
+    })
+    split_ratios: Dict[str, float] = field(default_factory=lambda: {
+        "train": 0.8,
+        "val": 0.1,
+        "test": 0.1
+    })
+    split_paths: Dict[str, str] = field(default_factory=dict)
 
 
+# -------------------
+# GNN CONFIG
+# -------------------
+@dataclass
+class GNNConfig:
+    device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    seed: int = 42
+
+    embed_dim: int = 128
+    num_layers: int = 3
+    init_std: float = 0.1
+    lambda_align: float = 0.1
+    freeze_audio: bool = True
+
+    edge_mlp_hidden_dim: int = 32
+    edge_mlp_input_dim: int = 4
+
+    lr: float = 0.001
+    num_epochs: int = 50
+    batch_size: int = 1024
+    weight_decay: float = 1e-4
+    num_workers: int = 4
+    eval_every: int = 5
+    neg_samples_per_pos = 5
+
+    k_hit: int = 10
+
+    eval_event_map: Dict[str, int] = field(default_factory=lambda: {
+        "like": 2,
+        "listen": 1,
+        "unlike": 0,
+        "dislike": -1,
+        "undislike": 0
+    })
 
 
+# -------------------
+# ANN CONFIG
+# -------------------
+@dataclass
+class ANNConfig:
+    top_k: int = 10
 
 
+# -------------------
+# COMBINED CONFIG
+# -------------------
+@dataclass
+class Config:
+    dataset: DatasetConfig = DatasetConfig()
+    pipeline: PipelineConfig = PipelineConfig()
+    paths: PathsConfig = PathsConfig(dataset_size=DatasetConfig().dataset_size)
+    preprocessing: PreprocessingConfig = PreprocessingConfig()
+    gnn: GNNConfig = GNNConfig()
+    ann: ANNConfig = ANNConfig()
+
+
+# single global config object
+config = Config()

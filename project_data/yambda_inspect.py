@@ -2,23 +2,20 @@ import pandas as pd
 import os
 import json
 import numpy as np
-from config import (
-    DOWNLOAD_FULL_DATASET, RAW_LISTENS_FILE, RAW_LIKES_FILE, RAW_DISLIKES_FILE,
-    RAW_UNLIKES_FILE, RAW_UNDISLIKES_FILE, RAW_MULTI_EVENT_FILE, EMBEDDINGS_FILE,
-    ALBUM_MAPPING_FILE, ARTIST_MAPPING_FILE, DATA_COLS_FILE, DATA_STATS_FILE
-)
+from config import config
 
 # Decide which files to include
-if DOWNLOAD_FULL_DATASET:
-    files_to_process = [
-        RAW_LISTENS_FILE, RAW_LIKES_FILE, RAW_DISLIKES_FILE,
-        RAW_UNLIKES_FILE, RAW_UNDISLIKES_FILE, RAW_MULTI_EVENT_FILE,
-        EMBEDDINGS_FILE, ALBUM_MAPPING_FILE, ARTIST_MAPPING_FILE
-    ]
+if config.dataset.download_full:
+    files_to_process = config.paths.raw_data_files
+    files_to_process.append(config.paths.raw_multi_event_file)
+    files_to_process.append(config.paths.audio_embeddings_file)
+    files_to_process.append(config.paths.album_mapping_file)
+    files_to_process.append(config.paths.artist_mapping_file)
 else:
     # Only essential files
     files_to_process = [
-        RAW_MULTI_EVENT_FILE, EMBEDDINGS_FILE, ALBUM_MAPPING_FILE, ARTIST_MAPPING_FILE
+        config.paths.raw_multi_event_file, config.paths.audio_embeddings_file,
+        config.path.album_mapping_file, config.paths.artist_mapping_file
     ]
 
 # Helper function to convert JSON-serializable
@@ -62,6 +59,6 @@ for file_path in files_to_process:
 
 # Save summary CSVs
 summary_df = pd.DataFrame(summary_list)
-summary_df.to_csv(DATA_COLS_FILE, index=False)
-print(f"Column summary saved to {DATA_COLS_FILE}")
+summary_df.to_csv(config.paths.data_cols_file, index=False)
+print(f"Column summary saved to {config.paths.data_cols_file}")
 

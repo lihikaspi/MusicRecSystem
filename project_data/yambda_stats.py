@@ -1,14 +1,15 @@
 import os
 import pandas as pd
-from config import DOWNLOAD_FULL_DATASET, RAW_DATA_FILES, RAW_MULTI_EVENT_FILE, DATA_STATS_FILE
+from config import config
 
 # Decide which interactions to include
-if DOWNLOAD_FULL_DATASET:
+if config.dataset.download_full:
     # All raw interaction files + multi_event
-    interactions_files = {os.path.basename(f).replace(".parquet", ""): f for f in RAW_DATA_FILES + [RAW_MULTI_EVENT_FILE]}
+    interactions_files = {os.path.basename(f).replace(".parquet", ""):
+                            f for f in config.paths.raw_data_files + [config.paths.raw_multi_event_file]}
 else:
     # Only multi_event
-    interactions_files = {"multi_event": RAW_MULTI_EVENT_FILE}
+    interactions_files = {"multi_event": config.paths.raw_multi_event_file}
 
 # Columns
 user_col = "uid"
@@ -97,5 +98,5 @@ stats_df.loc[len(stats_df)] = {
 }
 
 # Save CSV
-stats_df.to_csv(DATA_STATS_FILE, index=False)
-print(f"\n Stats saved to CSV: {DATA_STATS_FILE}")
+stats_df.to_csv(config.paths.data_stats_file, index=False)
+print(f"\n Stats saved to CSV: {config.paths.data_stats_file}")

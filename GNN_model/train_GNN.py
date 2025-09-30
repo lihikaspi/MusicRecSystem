@@ -6,6 +6,7 @@ from torch_geometric.data import HeteroData
 from tqdm import tqdm
 from GNN_model.GNN_class import LightGCN
 from GNN_model.eval_GNN import GNNEvaluator
+from config import Config
 
 
 # BPR Dataset
@@ -14,7 +15,7 @@ class BPRDataset(Dataset):
     Dataset for BPR training.
     Performs negative sampling on the fly.
     """
-    def __init__(self, interactions, num_items, neg_samples_per_pos=5):
+    def __init__(self, interactions, num_items, neg_samples_per_pos):
         self.user_item = interactions
         self.num_items = num_items
         self.neg_samples_per_pos = neg_samples_per_pos
@@ -60,38 +61,25 @@ class BPRDataset(Dataset):
 
 # Trainer class
 class GNNTrainer:
-    def __init__(
-        self,
-        model: LightGCN,
-        train_graph: HeteroData,
-        val_parquet: str,
-        device: str,
-        batch_size: int,
-        lr: float,
-        lambda_align: float,
-        event_map: dict,
-        num_workers: int,
-        weight_decay: float
-    ):
+    def __init__(self, model: LightGCN, train_graph: HeteroData, config: Config):
         """
         Args:
             model: LightGCN instance
             train_graph: HeteroData train graph
-            val_parquet: path to validation Parquet file
-            device: "cuda" or "cpu"
-            batch_size: BPR batch size
-            lr: learning rate
-            lambda_align: weight for alignment loss
+            config: Config object
         """
-        self.model = model.to(device)
-        self.train_graph = train_graph.to(device)
-        self.device = device
-        self.batch_size = batch_size
-        self.lr = lr
-        self.lambda_align = lambda_align
+        self.config = config
+
+        self.device = config.gnn.device
+        self.model = model.to(self.device)
+        self.train_graph = train_graph.to(self.device)
+        self.batch_size = config.gnn.batch_size
+        self.lr = config.gnn.lr
+        self.lambda_align = config.gnn.lambda_align
 
         # Load validation interactions
-        self.val_interactions = self._load_interactions(val_parquet)
+        self.val_parquet = config.paths.val_set_file
+        self.val_interactions = self._load_interactions(self.val_parquet)
         self.num_items = train_graph['item'].x.shape[0]
 
         # Prepare train edges from heterograph
@@ -99,26 +87,25 @@ class GNNTrainer:
         user_idx, item_idx = edge_index.cpu().numpy()
         train_edges = np.stack([user_idx, item_idx], axis=1)
 
-        self.dataset = BPRDataset(train_edges, self.num_items)
+        self.dataset = BPRDataset(train_edges, self.num_items, config.gnn.neg_samples_per_pos)
         self.loader = DataLoader(
             self.dataset,
-            batch_size=batch_size,
+            batch_size=self.batch_size,
             shuffle=True,
-            num_workers=num_workers,
-            pin_memory=True if device == 'cuda' else False
+            num_workers=config.gnn.num_workers,
+            pin_memory=True if self.device == 'cuda' else False
         )
 
         self.optimizer = torch.optim.AdamW(
             self.model.parameters(),
             lr=self.lr,
-            weight_decay=weight_decay
+            weight_decay=config.gnn.weight_decay
         )
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             self.optimizer, mode='max', factor=0.5, patience=3, verbose=True
         )
 
-        self.evaluator = GNNEvaluator(self.model, self.train_graph, device, event_map)
-        self.val_parquet = val_parquet
+        self.evaluator = GNNEvaluator(self.model, self.train_graph, self.device, config.gnn.eval_event_map)
 
         # Cache embeddings computation
         self._cached_embeddings = None
@@ -146,7 +133,13 @@ class GNNTrainer:
         return self._cached_embeddings
 
     # Training loop
-    def train(self, num_epochs: int, save_path: str, k_hit: int, eval_every: int):
+    def train(self):
+        num_epochs = self.config.gnn.num_epochs
+        save_path = self.config.paths.trained_gnn
+        k_hit = self.config.gnn.k_hit
+        eval_every = self.config.gnn.eval_every
+
+        # Initialize best NDCG
         best_ndcg = 0.0
 
         # Compile model for PyTorch 2.0+ if available

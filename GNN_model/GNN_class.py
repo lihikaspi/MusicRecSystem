@@ -3,18 +3,19 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import LGConv
 from torch_geometric.data import HeteroData
-from config import EMBED_DIM, NUM_LAYERS, EDGE_MLP_INPUT_DIM, EDGE_MLP_HIDDEN_DIM
+from config import Config
+
 
 class EdgeWeightMLP(nn.Module):
     """
     MLP to compute edge weights from numeric edge attributes and initial weight.
     """
-    def __init__(self):
+    def __init__(self, config: Config):
         super().__init__()
         self.mlp = nn.Sequential(
-            nn.Linear(EDGE_MLP_INPUT_DIM, EDGE_MLP_HIDDEN_DIM),
+            nn.Linear(config.gnn.edge_mlp_input_dim, config.gnn.edge_mlp_hidden_dim),
             nn.ReLU(),
-            nn.Linear(EDGE_MLP_HIDDEN_DIM, 1),
+            nn.Linear(config.gnn.edge_mlp_hidden_dim, 1),
             nn.Sigmoid()
         )
 
@@ -23,28 +24,30 @@ class EdgeWeightMLP(nn.Module):
 
 
 class LightGCN(nn.Module):
-    def __init__(self, data: HeteroData, lambda_align: float = 0.0):
+    def __init__(self, data: HeteroData, config: Config):
         """
         Args:
             data: HeteroData containing 'user' and 'item' nodes and 'interacts' edges
             lambda_align: weight for optional alignment loss between item embeddings and projected audio
         """
         super().__init__()
-        self.num_layers = NUM_LAYERS
-        self.lambda_align = lambda_align
+        self.config = config
+        self.num_layers = config.gnn.num_layers
+        self.lambda_align = config.gnn.lambda_align
+        self.embed_dim = config.gnn.embed_dim
 
         # ---------- Node embeddings ----------
         num_users = data['user'].user_id.max().item() + 1
         num_artists = data['item'].artist_id.max().item() + 1
         num_albums = data['item'].album_id.max().item() + 1
 
-        self.user_emb = nn.Embedding(num_users, EMBED_DIM)
-        self.artist_emb = nn.Embedding(num_artists, EMBED_DIM)
-        self.album_emb = nn.Embedding(num_albums, EMBED_DIM)
+        self.user_emb = nn.Embedding(num_users, self.embed_dim)
+        self.artist_emb = nn.Embedding(num_artists, self.embed_dim)
+        self.album_emb = nn.Embedding(num_albums, self.embed_dim)
 
         # Fixed audio embeddings
         self.register_buffer('item_audio_emb', data['item'].x)
-        self.audio_proj = nn.Linear(data['item'].x.size(1), EMBED_DIM, bias=False)
+        self.audio_proj = nn.Linear(data['item'].x.size(1), self.embed_dim, bias=False)
 
         # ---------- Initialize embeddings ----------
         nn.init.xavier_uniform_(self.user_emb.weight)
@@ -53,10 +56,10 @@ class LightGCN(nn.Module):
         nn.init.xavier_uniform_(self.audio_proj.weight)
 
         # ---------- Edge MLP ----------
-        self.edge_mlp = EdgeWeightMLP()
+        self.edge_mlp = EdgeWeightMLP(config)
 
         # ---------- LGConv layers ----------
-        self.convs = nn.ModuleList([LGConv() for _ in range(NUM_LAYERS)])
+        self.convs = nn.ModuleList([LGConv() for _ in range(self.num_layers)])
 
         # ---------- Precompute static components ----------
         self.register_buffer('edge_index', data['user', 'interacts', 'item'].edge_index)

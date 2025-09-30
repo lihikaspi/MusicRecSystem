@@ -2,56 +2,42 @@ import torch
 from GNN_model.train_GNN import GNNTrainer
 from GNN_model.GNN_class import LightGCN
 from GNN_model.eval_GNN import GNNEvaluator
-from config import (
-    TRAIN_GRAPH_FILE, VAL_SET_FILE, TEST_SET_FILE, TRAINED_GNN, USER_EMBEDDINGS_GNN,
-    SONG_EMBEDDINGS_GNN, DEVICE, BATCH_SIZE, LR, NUM_EPOCHS, LAMBDA_ALIGN, K_HIT, EVAL_EVENT_MAP,
-    EVAL_EVERY, NUM_WORKERS, WEIGHT_DECAY
-)
+from config import config
 
 
 def main():
     # Step 1: Load train graph
     print("Loading pre-built train graph...")
-    train_graph = torch.load(TRAIN_GRAPH_FILE)
+    train_graph = torch.load(config.paths.train_graph_file)
 
     # Step 2: Initialize the model
     print("Initializing LightGCN model...")
-    model = LightGCN(train_graph, lambda_align=LAMBDA_ALIGN)
+    model = LightGCN(train_graph, config)
 
     # Step 3: Initialize trainer
-    trainer = GNNTrainer(
-        model=model,
-        train_graph=train_graph,
-        val_parquet=VAL_SET_FILE,
-        device=DEVICE,
-        batch_size=BATCH_SIZE,
-        lr=LR,
-        lambda_align=LAMBDA_ALIGN,
-        event_map=EVAL_EVENT_MAP,
-        num_workers=NUM_WORKERS,
-        weight_decay=WEIGHT_DECAY
-    )
+    trainer = GNNTrainer(model, train_graph, config)
 
     # Step 4: Train model
     print("Starting training...")
-    trainer.train(NUM_EPOCHS, TRAINED_GNN, K_HIT, EVAL_EVERY)
+    trainer.train()
 
     # Step 5: Load best model & evaluate on test set
     print("Loading best model for evaluation...")
-    model.load_state_dict(torch.load(TRAINED_GNN, map_location=DEVICE))
+    model.load_state_dict(torch.load(config.paths.trained_gnn, map_location=config.gnn.device))
 
     print("Evaluating on test set...")
-    test_evaluator = GNNEvaluator(model, train_graph, DEVICE, EVAL_EVENT_MAP)
+    test_evaluator = GNNEvaluator(model, train_graph, config.gnn.device, config.gnn.eval_event_map)
 
     # Evaluate using the test parquet file
-    test_metrics = test_evaluator.evaluate(TEST_SET_FILE, k=K_HIT)
+    k_hit = config.gnn.k_hit
+    test_metrics = test_evaluator.evaluate(config.paths.test_set_file, k=k_hit)
 
-    print(f"Test set metrics @K={K_HIT}:")
-    print(f"  NDCG@{K_HIT}: {test_metrics['ndcg@k']:.4f}")
-    print(f"  Hit@{K_HIT} (like only): {test_metrics['hit_like@k']:.4f}")
-    print(f"  Hit@{K_HIT} (like+listen): {test_metrics['hit_like_listen@k']:.4f}")
+    print(f"Test set metrics @K={k_hit}:")
+    print(f"  NDCG@{k_hit}: {test_metrics['ndcg@k']:.4f}")
+    print(f"  Hit@{k_hit} (like only): {test_metrics['hit_like@k']:.4f}")
+    print(f"  Hit@{k_hit} (like+listen): {test_metrics['hit_like_listen@k']:.4f}")
     print(f"  AUC: {test_metrics['auc']:.4f}")
-    print(f"  Dislike-FPR@{K_HIT}: {test_metrics['dislike_fpr@k']:.4f}")
+    print(f"  Dislike-FPR@{k_hit}: {test_metrics['dislike_fpr@k']:.4f}")
 
     # Step 6: Save final embeddings
     print("Saving user and item embeddings...")
@@ -71,16 +57,16 @@ def main():
         torch.save({
             "user_ids": user_ids,
             "user_emb": user_emb
-        }, USER_EMBEDDINGS_GNN)
+        }, config.paths.user_embeddings_gnn)
 
         # Save item/song embeddings
         torch.save({
             "item_ids": item_ids,
             "item_emb": item_emb
-        }, SONG_EMBEDDINGS_GNN)
+        }, config.paths.song_embeddings_gnn)
 
-    print(f"User embeddings saved to {USER_EMBEDDINGS_GNN}")
-    print(f"Song embeddings saved to {SONG_EMBEDDINGS_GNN}")
+    print(f"User embeddings saved to {config.paths.user_embeddings_gnn}")
+    print(f"Song embeddings saved to {config.paths.song_embeddings_gnn}")
 
 
 if __name__ == "__main__":

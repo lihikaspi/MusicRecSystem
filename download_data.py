@@ -1,24 +1,27 @@
 import os
 import shutil
 from project_data.download_yambda import YambdaDataset
-from config import DATASET_SIZE, DATASET_TYPE, DATA_DIR, DOWNLOAD_FULL_DATASET
+from config import config
 
 
 def main():
-    # Delete old folder if it exists
-    if os.path.exists(DATA_DIR):
-        print(f"Deleting old folder: {DATA_DIR}")
-        shutil.rmtree(DATA_DIR)
+    data_dir = config.paths.data_dir
 
-    os.makedirs(DATA_DIR, exist_ok=True)
-    print(f"Created new folder: {DATA_DIR}")
+    # Delete old folder if it exists
+    if os.path.exists(data_dir):
+        print(f"Deleting old folder: {data_dir}")
+        shutil.rmtree(data_dir)
+
+    os.makedirs(data_dir, exist_ok=True)
+    print(f"Created new folder: {data_dir}")
 
     # Download datasets
-    dataset = YambdaDataset(dataset_type=DATASET_TYPE, dataset_size=DATASET_SIZE)
+    dataset = YambdaDataset(dataset_type=config.dataset.dataset_type,
+                            dataset_size=config.dataset.dataset_size)
 
     datasets_to_save = {}
 
-    if DOWNLOAD_FULL_DATASET:
+    if config.dataset.download_full:
         # Interactions
         for event in ["likes", "listens", "multi_event", "dislikes", "unlikes", "undislikes"]:
             datasets_to_save[event] = dataset.interaction(event)
@@ -33,11 +36,11 @@ def main():
 
     # Save all datasets to disk
     for name, ds in datasets_to_save.items():
-        file_path = os.path.join(DATA_DIR, f"{name}.parquet")
+        file_path = os.path.join(data_dir, f"{name}.parquet")
         print(f"Saving {name} to {file_path} ...")
         ds.to_parquet(file_path)
 
-    print(f"All datasets saved to folder: {DATA_DIR}")
+    print(f"All datasets saved to folder: {data_dir}")
 
 
 if __name__ == "__main__":
