@@ -90,7 +90,7 @@ class EventProcessor:
 
         Args:
             interactions_threshold: threshold for interactions
-            output_path: path to save the filtered file, default: None
+            output_path: path to save the filtered file, default: none
         """
         self._compute_active_users(interactions_threshold)
         self._filter_multi_event_file()
