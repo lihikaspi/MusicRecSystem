@@ -4,32 +4,9 @@ from GNN_model.GNN_class import LightGCN
 from GNN_model.eval_GNN import GNNEvaluator
 from config import config
 
-
-def main():
-    # Step 1: Load train graph
-    print("Loading pre-built train graph...")
-    train_graph = torch.load(config.paths.train_graph_file)
-
-    # Step 2: Initialize the model
-    print("Initializing LightGCN model...")
-    model = LightGCN(train_graph, config)
-
-    # Step 3: Initialize trainer
-    trainer = GNNTrainer(model, train_graph, config)
-
-    # Step 4: Train model
-    print("Starting training...")
-    trainer.train()
-
-    # Step 5: Load best model & evaluate on test set
-    print("Loading best model for evaluation...")
-    model.load_state_dict(torch.load(config.paths.trained_gnn, map_location=config.gnn.device))
-
-    print("Evaluating on test set...")
-    test_evaluator = GNNEvaluator(model, train_graph, config.gnn.device, config.gnn.eval_event_map)
-
+def test_evaluation(model: LightGCN, train_graph, k_hit: int):
     # Evaluate using the test parquet file
-    k_hit = config.gnn.k_hit
+    test_evaluator = GNNEvaluator(model, train_graph, config.gnn.device, config.gnn.eval_event_map)
     test_metrics = test_evaluator.evaluate(config.paths.test_set_file, k=k_hit)
 
     print(f"Test set metrics @K={k_hit}:")
@@ -39,8 +16,8 @@ def main():
     print(f"  AUC: {test_metrics['auc']:.4f}")
     print(f"  Dislike-FPR@{k_hit}: {test_metrics['dislike_fpr@k']:.4f}")
 
-    # Step 6: Save final embeddings
-    print("Saving user and item embeddings...")
+
+def save_final_embeddings(model: LightGCN, train_graph, user_embed_path, song_embed_path):
     with torch.no_grad():
         # Get embeddings from the model
         user_emb, item_emb, _ = model(train_graph)
@@ -57,16 +34,37 @@ def main():
         torch.save({
             "user_ids": user_ids,
             "user_emb": user_emb
-        }, config.paths.user_embeddings_gnn)
+        }, user_embed_path)
 
         # Save item/song embeddings
         torch.save({
             "item_ids": item_ids,
             "item_emb": item_emb
-        }, config.paths.song_embeddings_gnn)
+        }, song_embed_path)
 
-    print(f"User embeddings saved to {config.paths.user_embeddings_gnn}")
-    print(f"Song embeddings saved to {config.paths.song_embeddings_gnn}")
+    print(f"User embeddings saved to {user_embed_path}")
+    print(f"Song embeddings saved to {song_embed_path}")
+
+
+def main():
+    print("Loading pre-built train graph...")
+    train_graph = torch.load(config.paths.train_graph_file)
+
+    print("Initializing LightGCN model...")
+    model = LightGCN(train_graph, config)
+
+    print("Starting training...")
+    trainer = GNNTrainer(model, train_graph, config)
+    trainer.train()
+
+    print("Loading best model for evaluation...")
+    model.load_state_dict(torch.load(config.paths.trained_gnn, map_location=config.gnn.device))
+
+    print("Evaluating on test set...")
+    test_evaluation(model, train_graph, config.gnn.k_hit)
+
+    print("Saving user and item embeddings...")
+    save_final_embeddings(model, train_graph, config.paths.user_embeddings_gnn, config.paths.song_embeddings_gnn)
 
 
 if __name__ == "__main__":

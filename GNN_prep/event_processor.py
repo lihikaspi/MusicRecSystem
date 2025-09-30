@@ -32,7 +32,7 @@ class EventProcessor:
             HAVING COUNT(*) >= {threshold}
         """
         self.con.execute(query)
-        print("Temporary table 'active_users' created.")
+        print("Found all active users")
 
 
     def _filter_multi_event_file(self):
@@ -51,7 +51,7 @@ class EventProcessor:
             WHERE e.uid IS NOT NULL AND e.item_id IS NOT NULL
         """
         self.con.execute(query)
-        print("Temporary table 'filtered_events' created.")
+        print("Finished filtering the multi-event interactions")
 
 
     def _encode_ids(self):
@@ -76,7 +76,7 @@ class EventProcessor:
                 JOIN song_index s USING (item_id)
         """
         self.con.execute(query)
-        print("Temporary table 'events_with_idx' created.")
+        print("Created user and song indices")
 
 
     def filter_events(self, interactions_threshold: int, output_path:str = None ):
@@ -98,7 +98,7 @@ class EventProcessor:
 
         if output_path is not None:
             self.con.execute(f"COPY (SELECT * FROM events_with_idx) TO '{output_path}' (FORMAT PARQUET)")
-            print(f'saved filtered multi event file to {output_path}')
+            print(f'Filtered multi event file saved to {output_path}')
 
     def split_data(self, split_ratios: dict, split_paths: dict):
         """
@@ -126,10 +126,10 @@ class EventProcessor:
             ORDER BY o.user_idx, o.timestamp
         """
         self.con.execute(query)
-        print(f"Data was split into:\n"
+        print(f"\nData was split into:\n"
               f"{split_ratios['train'] * 100}% train set\n"
               f"{split_ratios['val'] * 100}% validation set\n"
-              f"{split_ratios['test'] * 100}% test set")
+              f"{split_ratios['test'] * 100}% test set\n")
 
         self.con.execute(f"COPY (SELECT * FROM split_data WHERE split='train') TO '{split_paths['train']}' (FORMAT PARQUET)")
         print(f"Train data saved to {split_paths['train']}")

@@ -67,6 +67,7 @@ class GraphBuilder:
         num_users = edges_df['user_idx'].max() + 1
         data['user'].user_id = torch.arange(num_users, dtype=torch.long)
 
+        print('HeteroData graph object created')
         return data
 
     def save_graph(self, output_path):

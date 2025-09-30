@@ -1,8 +1,7 @@
-# run_all.py
 import subprocess
 import argparse
 import sys
-from config import STAGE_FILES
+from config import config
 
 def run_stage(stage_name, stage_file):
     print(f"\n>>> Running stage: {stage_name} ({stage_file}) ...")
@@ -21,27 +20,28 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    stage_dict = {name: file for name, file in STAGE_FILES}
+    stage_files = config.pipeline.stage_files
+    stage_dict = {name: file for name, file in stage_files}
 
     if args.stage:
         stage_arg = args.stage.lower()
 
         if stage_arg.isdigit():
             idx = int(stage_arg) - 1
-            if idx < 0 or idx >= len(STAGE_FILES):
-                sys.exit(f"❌ Invalid stage number: {stage_arg}")
-            stage_name, stage_file = STAGE_FILES[idx]
+            if idx < 0 or idx >= len(stage_files):
+                sys.exit(f"Invalid stage number: {stage_arg}")
+            stage_name, stage_file = stage_files[idx]
             run_stage(stage_name, stage_file)
 
         elif stage_arg in stage_dict:
             run_stage(stage_arg, stage_dict[stage_arg])
 
         else:
-            sys.exit(f"❌ Invalid stage: {args.stage}. "
-                     f"Choose from {list(stage_dict.keys())} or 1–{len(STAGE_FILES)}.")
+            sys.exit(f"Invalid stage: {args.stage}. "
+                     f"Choose from {list(stage_dict.keys())} or 1–{len(stage_files)}.")
 
     else:
-        for name, file in STAGE_FILES:
+        for name, file in stage_files:
             run_stage(name, file)
 
-        print("✅ Pipeline finished successfully!")
+    print(">>> Pipeline finished successfully!")

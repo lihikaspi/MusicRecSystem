@@ -51,7 +51,7 @@ class EdgeAssembler:
             GROUP BY e.user_idx, e.item_idx, e.event_type, emb.item_id, emb.embed, emb.normalized_embed
         """
         self.con.execute(query)
-        print("Temporary table 'agg_edges' created.")
+        print("Finished aggregating the edges")
 
 
     def _add_song_metadata(self):
@@ -97,7 +97,7 @@ class EdgeAssembler:
                 ON ae.item_idx = al.item_id
         """
         self.con.execute(query)
-        print("Temporary table 'agg_edges_artist_album' created.")
+        print("Added album and artist information")
 
 
     def _add_event_type_cat(self):
@@ -117,7 +117,7 @@ class EdgeAssembler:
             FROM agg_edges_artist_album e
         """
         self.con.execute(query)
-        print("Temporary table 'agg_edges_event_type' created.")
+        print("Turned event type into numeric categories")
 
 
     def assemble_edges(self, output_path: str = None):

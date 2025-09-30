@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 import torch
 from typing import List, Tuple, Dict
+import os
 
 # -------------------
 # DATASET CONFIG
@@ -33,8 +34,8 @@ class PathsConfig:
     dataset_size: str = "50m"
     data_dir: str = field(init=False)
     processed_dir: str = "processed_data"
-    gnn_model: str = "GNN_model"
-    recs_dir: str = "recs"
+    gnn_models: str = "models/gnn"
+    ann_models: str = "models/ann"
 
     data_cols_file: str = field(init=False)
     data_stats_file: str = field(init=False)
@@ -64,7 +65,13 @@ class PathsConfig:
     user_embeddings_gnn: str = field(init=False)
     song_embeddings_gnn: str = field(init=False)
 
+    ann_index: str = field(init=False)
+
     def __post_init__(self):
+        os.makedirs(self.processed_dir, exist_ok=True)
+        os.makedirs(self.gnn_models, exist_ok=True)
+        os.makedirs(self.ann_models, exist_ok=True)
+
         self.data_dir = f"project_data/YambdaData{self.dataset_size}/"
         self.data_cols_file = f"{self.data_dir}/yambda_columns.csv"
         self.data_stats_file = f"{self.data_dir}/YambdaStats_{self.dataset_size}.csv"
@@ -96,9 +103,11 @@ class PathsConfig:
             self.raw_undislikes_file
         ]
 
-        self.trained_gnn = f"{self.gnn_model}/best_model.pth"
-        self.user_embeddings_gnn = f"{self.gnn_model}/user_embeddings.pt"
-        self.song_embeddings_gnn = f"{self.gnn_model}/song_embeddings.pt"
+        self.trained_gnn = f"{self.gnn_models}/best_model.pth"
+        self.user_embeddings_gnn = f"{self.gnn_models}/user_embeddings.pt"
+        self.song_embeddings_gnn = f"{self.gnn_models}/song_embeddings.pt"
+
+        self.ann_index = f"{self.ann_models}/index"
 
 
 # -------------------
