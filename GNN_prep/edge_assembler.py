@@ -24,16 +24,55 @@ class EdgeAssembler:
         self.artist_mapping_path = artist_mapping_path
         self.event_type_mapping = event_type_mapping
 
+    def _filter_cancelled_events(self):
+        """
+        Filters train events to cancel out likes/unlikes and dislikes/undislikes.
+        - Keeps all listen events.
+        - Removes likes followed by unlikes and dislikes followed by undislikes.
+        Creates a temporary table 'filtered_events' for aggregation.
+        """
+        cancel_query = f"""
+        CREATE TEMPORARY TABLE filtered_events AS
+        SELECT *
+        FROM read_parquet('{self.events_path}') e
+        WHERE e.event_type = 'listen'
+           OR (e.event_type = 'like'
+               AND NOT EXISTS (
+                   SELECT 1 FROM read_parquet('{self.events_path}') x
+                   WHERE x.user_idx = e.user_idx
+                     AND x.item_idx = e.item_idx
+                     AND x.event_type = 'unlike'
+                     AND x.timestamp > e.timestamp
+               )
+           )
+           OR (e.event_type = 'dislike'
+               AND NOT EXISTS (
+                   SELECT 1 FROM read_parquet('{self.events_path}') x
+                   WHERE x.user_idx = e.user_idx
+                     AND x.item_idx = e.item_idx
+                     AND x.event_type = 'undislike'
+                     AND x.timestamp > e.timestamp
+               )
+           )
+        """
+        self.con.execute(cancel_query)
+        print("Finished filtering cancelled events")
+
 
     def _aggregate_edges(self):
         """
-        Aggregates the interactions by user-song-event, adding interactions counter and the average played ratio for 'listen' events.
+        Aggregates the interactions by user-song-event, adding interactions counter, event-type weights and the audio embeddings.
         Creates a temporary table 'agg_edges' in the DuckDB memory.
         """
-        case_expr = "CASE e.event_type\n"
+        case_weight = "CASE e.event_type\n"
         for etype, weight in self.weights.items():
-            case_expr += f"    WHEN '{etype}' THEN {weight}\n"
-        case_expr += "END AS edge_weight"
+            case_weight += f"    WHEN '{etype}' THEN {weight}\n"
+        case_weight += "END AS edge_weight"
+
+        case_event_type = "CASE e.event_type\n"
+        for etype, cat in self.event_type_mapping.items():
+            case_event_type += f"    WHEN '{etype}' THEN {cat}\n"
+        case_event_type += "    ELSE 0\nEND AS edge_type"
 
         query = f"""
             CREATE TEMPORARY TABLE agg_edges AS
@@ -42,9 +81,17 @@ class EdgeAssembler:
                 e.item_idx, 
                 e.event_type, 
                 COUNT(*) AS edge_count,
-                COALESCE(AVG(CASE WHEN e.event_type = 'listen' THEN e.played_ratio_pct END), 0) AS edge_avg_played_ratio,
-                {case_expr},
-                 emb.normalized_embed AS item_normalized_embed
+                {case_weight},
+                {case_event_type},
+                AVG(
+                    CASE 
+                        WHEN e.event_type = 'listen' THEN e.played_ratio_pct
+                        WHEN e.event_type = 'like' THEN 1
+                        WHEN e.event_type = 'dislike' THEN 0
+                        ELSE 0.5
+                    END
+                ) AS edge_avg_played_ratio,
+                emb.normalized_embed AS item_normalized_embed
             FROM read_parquet('{self.events_path}') e
             LEFT JOIN read_parquet('{self.embeddings_path}') emb
                 ON e.item_id = emb.item_id
@@ -100,43 +147,22 @@ class EdgeAssembler:
         print("Added album and artist information")
 
 
-    def _add_event_type_cat(self):
-        """
-        Adds event types (int) to the aggregated edges table
-        Creates a temporary table 'agg_edges_event_type' in the DuckDB memory.
-        """
-        case_event_type = "CASE e.event_type\n"
-        for etype, cat in self.event_type_mapping.items():
-            case_event_type += f"    WHEN '{etype}' THEN {cat}\n"
-        case_event_type += "    ELSE 0\nEND AS edge_type"
-
-        # Query
-        query = f"""
-            CREATE TEMPORARY TABLE agg_edges_event_type AS
-            SELECT e.*, {case_event_type}
-            FROM agg_edges_artist_album e
-        """
-        self.con.execute(query)
-        print("Turned event type into numeric categories")
-
-
     def assemble_edges(self, output_path: str = None):
         """
         Runs the edge assembler pipeline:
             1. aggregate the edges
             2. add artist and album info
-            3. add numeric event type
 
         Add an output path to save the filtered file.
 
         Args:
             output_path: path to output file, default: None
         """
+        # self._filter_cancelled_events()
         self._aggregate_edges()
         self._add_song_metadata()
-        self._add_event_type_cat()
 
-        if output_path is None:
+        if output_path is not None:
             self.con.execute(f"COPY (SELECT * FROM agg_edges_event_type) TO '{output_path}' (FORMAT PARQUET)")
             print(f"Edge data saved to {output_path}")
 
