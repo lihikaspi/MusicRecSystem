@@ -72,7 +72,7 @@ class GNNTrainer:
 
         self.device = config.gnn.device
         self.model = model.to(self.device)
-        self.train_graph = train_graph.to(self.device)
+        self.train_graph = train_graph.to("cpu")
         self.batch_size = config.gnn.batch_size
         self.lr = config.gnn.lr
         self.lambda_align = config.gnn.lambda_align
@@ -143,8 +143,8 @@ class GNNTrainer:
         best_ndcg = 0.0
 
         # Compile model for PyTorch 2.0+ if available
-        if hasattr(torch, 'compile'):
-            self.model = torch.compile(self.model)
+        # if hasattr(torch, 'compile'):
+        #     self.model = torch.compile(self.model)
 
         for epoch in range(1, num_epochs + 1):
             self.model.train()
@@ -156,17 +156,17 @@ class GNNTrainer:
 
             for batch in progress:
                 u_idx, i_pos_idx, i_neg_idx = [
-                    torch.tensor(x, device=self.device, non_blocking=True)
+                    torch.tensor(x)
                     for x in batch
                 ]
                 self.optimizer.zero_grad()
 
                 # Forward pass on the full train graph
-                user_emb, item_emb, align_loss = self.model()
+                user_emb_full, item_emb_full, align_loss = self.model(self.train_graph)
 
-                u_emb = user_emb[u_idx]
-                i_pos_emb = item_emb[i_pos_idx]
-                i_neg_emb = item_emb[i_neg_idx]
+                u_emb = user_emb_full[u_idx].to(self.device)
+                i_pos_emb = item_emb_full[i_pos_idx].to(self.device)
+                i_neg_emb = item_emb_full[i_neg_idx].to(self.device)
 
                 loss_bpr = self._bpr_loss(u_emb, i_pos_emb, i_neg_emb)
                 loss = loss_bpr + self.lambda_align * align_loss
