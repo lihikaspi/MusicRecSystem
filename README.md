@@ -379,7 +379,7 @@ Run the GNN training and evaluation pipeline:
 
 ```bash
 # via the top-level runner (recommended)
-python run_all.py --stage train_gnn
+python run_all.py --stage gnn_train
 
 # directly
 python run_GNN_train.py

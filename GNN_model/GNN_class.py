@@ -73,9 +73,9 @@ class LightGCN(nn.Module):
         self.register_buffer('edge_features', edge_features)
 
         # Adjust edge_index for concatenated tensor (user offset = 0, item offset = num_users)
-        adjusted_edge_index = self.edge_index.clone()
-        adjusted_edge_index[1] += num_users
-        self.register_buffer('adjusted_edge_index', adjusted_edge_index)
+        self.adjusted_edge_index = self.edge_index.clone()
+        self.adjusted_edge_index[1] += num_users
+        self.register_buffer('adjusted_edge_index', self.adjusted_edge_index)
 
         self.num_users = num_users
 
