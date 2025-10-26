@@ -5,11 +5,8 @@ from torch_geometric.nn import LGConv
 from torch_geometric.data import HeteroData
 from config import Config
 
-
 class EdgeWeightMLP(nn.Module):
-    """
-    MLP to compute edge weights from numeric edge attributes and initial weight.
-    """
+    """MLP to compute edge weights from numeric edge attributes and initial weight."""
     def __init__(self, config: Config):
         super().__init__()
         self.mlp = nn.Sequential(
@@ -25,18 +22,13 @@ class EdgeWeightMLP(nn.Module):
 
 class LightGCN(nn.Module):
     def __init__(self, data: HeteroData, config: Config):
-        """
-        Args:
-            data: HeteroData containing 'user' and 'item' nodes and 'interacts' edges
-            lambda_align: weight for optional alignment loss between item embeddings and projected audio
-        """
         super().__init__()
         self.config = config
         self.num_layers = config.gnn.num_layers
         self.lambda_align = config.gnn.lambda_align
         self.embed_dim = config.gnn.embed_dim
 
-        # ---------- Node embeddings ----------
+        # Node embeddings
         num_users = data['user'].user_id.max().item() + 1
         num_artists = data['item'].artist_id.max().item() + 1
         num_albums = data['item'].album_id.max().item() + 1
@@ -49,67 +41,58 @@ class LightGCN(nn.Module):
         self.register_buffer('item_audio_emb', data['item'].x)
         self.audio_proj = nn.Linear(data['item'].x.size(1), self.embed_dim, bias=False)
 
-        # ---------- Initialize embeddings ----------
+        # Initialize embeddings
         nn.init.xavier_uniform_(self.user_emb.weight)
         nn.init.xavier_uniform_(self.artist_emb.weight)
         nn.init.xavier_uniform_(self.album_emb.weight)
         nn.init.xavier_uniform_(self.audio_proj.weight)
 
-        # ---------- Edge MLP ----------
+        # Edge MLP
         self.edge_mlp = EdgeWeightMLP(config)
 
-        # ---------- LGConv layers ----------
+        # LGConv layers
         self.convs = nn.ModuleList([LGConv() for _ in range(self.num_layers)])
 
-        # ---------- Precompute static components ----------
+        # Precompute static components
         self.register_buffer('edge_index', data['user', 'interacts', 'item'].edge_index)
         self.register_buffer('edge_attr', data['user', 'interacts', 'item'].edge_attr)
         self.register_buffer('edge_weight_init', data['user', 'interacts', 'item'].edge_weight_init)
         self.register_buffer('artist_ids', data['item'].artist_id)
         self.register_buffer('album_ids', data['item'].album_id)
 
-        # Precompute edge features and adjusted edge indices
+        # Precompute edge features
         edge_features = torch.cat([self.edge_attr, self.edge_weight_init.unsqueeze(1)], dim=1)
         self.register_buffer('edge_features', edge_features)
 
         # Adjust edge_index for concatenated tensor (user offset = 0, item offset = num_users)
-        # Only offset item indices if they start from 0 (i.e., not already globally indexed)
-        if self.edge_index[1].max() < data['item'].num_nodes:
-            adjusted_edge_index = self.edge_index.clone()
-            adjusted_edge_index[1] += num_users
-        else:
-            adjusted_edge_index = self.edge_index.clone()
-
+        adjusted_edge_index = self.edge_index.clone()
+        adjusted_edge_index[1] += num_users
         self.register_buffer('adjusted_edge_index', adjusted_edge_index)
-        print( f"[DEBUG] adjusted_edge_index range: {adjusted_edge_index.min().item()} - {adjusted_edge_index.max().item()}")
-        print(f"[DEBUG] x total nodes (users+items): {num_users + data['item'].num_nodes}")
 
         self.num_users = num_users
 
-    def forward(self, return_projections=False):
-        # ---------- Initial embeddings ----------
-        user_h = self.user_emb.weight
-        item_h = self.item_audio_emb + self.artist_emb(self.artist_ids) + self.album_emb(self.album_ids)
+        print(f"[DEBUG] adjusted_edge_index range: {adjusted_edge_index.min().item()} - {adjusted_edge_index.max().item()}")
+        print(f"[DEBUG] total nodes (users + items): {num_users + data['item'].num_nodes}")
 
-        # Optional projected audio for alignment (only compute if needed)
+    def forward(self, return_projections=False):
+        device = self.user_emb.weight.device
+
+        # Node embeddings
+        user_h = self.user_emb.weight
+        item_h = self.item_audio_emb.to(device) + self.artist_emb(self.artist_ids) + self.album_emb(self.album_ids)
+
+        # Optional projected audio for alignment
         projected_audio = None
         if self.lambda_align > 0 or return_projections:
-            projected_audio = self.audio_proj(self.item_audio_emb)
+            projected_audio = self.audio_proj(self.item_audio_emb.to(device))
 
-        # ---------- Compute edge weights ----------
-        edge_weight = self.edge_mlp(self.edge_features)
+        # Compute edge weights on the same device
+        edge_weight = self.edge_mlp(self.edge_features).to(device)
 
-        # ---------- Concatenate for homogeneous LGConv ----------
+        # Concatenate for homogeneous LGConv
         x = torch.cat([user_h, item_h], dim=0)
-        print("x.shape:", x.shape)
-        print("adjusted_edge_index.min(), max():", self.adjusted_edge_index.min().item(),
-              self.adjusted_edge_index.max().item())
-        print("num_users (buffer):", self.num_users)
-        assert self.adjusted_edge_index.min() >= 0
-        assert self.adjusted_edge_index.max() < x.size(0), "Edge index out of bounds!"
 
-        # ---------- Propagation ----------
-        # NEW: only keep final layer
+        # Propagation (memory-safe: keep only final layer)
         for conv in self.convs:
             x = conv(x, self.adjusted_edge_index, edge_weight=edge_weight)
         x_final = x
@@ -117,8 +100,8 @@ class LightGCN(nn.Module):
         final_user_h = x_final[:self.num_users]
         final_item_h = x_final[self.num_users:]
 
-        # ---------- Optional alignment loss ----------
-        align_loss = torch.tensor(0.0, device=x.device)
+        # Optional alignment loss
+        align_loss = torch.tensor(0.0, device=device)
         if self.lambda_align > 0 and projected_audio is not None:
             align_loss = F.mse_loss(final_item_h, projected_audio)
 
