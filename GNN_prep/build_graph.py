@@ -101,14 +101,16 @@ class GraphBuilder:
         torch.save(data, graph_path)
 
         with open(Path(output_dir) / "user_id_map.json", "w") as f:
-            json.dump(user_map, f)
+            json.dump({int(k): int(v) for k, v in user_map.items()}, f)
+
         with open(Path(output_dir) / "item_id_map.json", "w") as f:
-            json.dump(item_map, f)
+            json.dump({int(k): int(v) for k, v in item_map.items()}, f)
 
         with open(Path(output_dir) / "inv_user_id_map.json", "w") as f:
-            json.dump(inv_user_map, f)
+            json.dump({int(k): int(v) for k, v in inv_user_map.items()}, f)
+
         with open(Path(output_dir) / "inv_item_id_map.json", "w") as f:
-            json.dump(inv_item_map, f)
+            json.dump({int(k): int(v) for k, v in inv_item_map.items()}, f)
 
         print(f"[SUCCESS] Graph saved to {graph_path}")
         print(f"[SUCCESS] Mapping files saved to {output_dir}")
