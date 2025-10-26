@@ -23,7 +23,7 @@ def main():
 
     print('\n---------- GRAPH BUILDER ----------')
     graph_builder = GraphBuilder(con)
-    graph_builder.save_graph(config.paths.train_graph_file)
+    graph_builder.save_graph(config.paths.processed_dir)
 
     con.close()
 
