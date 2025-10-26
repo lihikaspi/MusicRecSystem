@@ -52,7 +52,7 @@ class GraphBuilder:
         # Item node features: only normalized embedding
         item_embeddings_df = self.con.execute("""
                                               SELECT item_idx, item_normalized_embed, artist_idx, album_idx
-                                              FROM agg_edges
+                                              FROM agg_edges_artist_album
                                               GROUP BY item_idx, item_normalized_embed, artist_idx, album_idx
                                               """).fetch_df()
 
