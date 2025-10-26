@@ -22,7 +22,7 @@ class GraphBuilder:
         # Query all edges from the existing temporary table
         query = """
                 SELECT user_idx, item_idx, edge_count, edge_avg_played_ratio, edge_type, edge_weight
-                FROM agg_edges_event_type 
+                FROM agg_edges
                 """
 
         edges_df = self.con.execute(query).fetch_df()
@@ -52,7 +52,7 @@ class GraphBuilder:
         # Item node features: only normalized embedding
         item_embeddings_df = self.con.execute("""
                                               SELECT item_idx, item_normalized_embed, artist_idx, album_idx
-                                              FROM agg_edges_event_type
+                                              FROM agg_edges
                                               GROUP BY item_idx, item_normalized_embed, artist_idx, album_idx
                                               """).fetch_df()
 
