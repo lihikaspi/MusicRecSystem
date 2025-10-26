@@ -109,13 +109,10 @@ class LightGCN(nn.Module):
         assert self.adjusted_edge_index.max() < x.size(0), "Edge index out of bounds!"
 
         # ---------- Propagation ----------
-        xs = [x]
+        # NEW: only keep final layer
         for conv in self.convs:
             x = conv(x, self.adjusted_edge_index, edge_weight=edge_weight)
-            xs.append(x)
-
-        # Use learnable combination weights instead of simple mean
-        x_final = torch.stack(xs, dim=0).mean(dim=0)  # Can be replaced with learnable weights
+        x_final = x
 
         final_user_h = x_final[:self.num_users]
         final_item_h = x_final[self.num_users:]
