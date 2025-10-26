@@ -161,7 +161,7 @@ class GNNConfig:
 
     lr: float = 0.001
     num_epochs: int = 50
-    batch_size: int = 64
+    batch_size: int = 16
     weight_decay: float = 1e-4
     num_workers: int = 4
     eval_every: int = 5
