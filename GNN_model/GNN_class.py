@@ -73,9 +73,16 @@ class LightGCN(nn.Module):
         self.register_buffer('edge_features', edge_features)
 
         # Adjust edge_index for concatenated tensor (user offset = 0, item offset = num_users)
-        self.adjusted_edge_index = self.edge_index.clone()
-        self.adjusted_edge_index[1] += num_users
-        self.register_buffer('adjusted_edge_index', self.adjusted_edge_index)
+        # Only offset item indices if they start from 0 (i.e., not already globally indexed)
+        if self.edge_index[1].max() < data['item'].num_nodes:
+            adjusted_edge_index = self.edge_index.clone()
+            adjusted_edge_index[1] += num_users
+        else:
+            adjusted_edge_index = self.edge_index.clone()
+
+        self.register_buffer('adjusted_edge_index', adjusted_edge_index)
+        print( f"[DEBUG] adjusted_edge_index range: {adjusted_edge_index.min().item()} - {adjusted_edge_index.max().item()}")
+        print(f"[DEBUG] x total nodes (users+items): {num_users + data['item'].num_nodes}")
 
         self.num_users = num_users
 
@@ -94,6 +101,12 @@ class LightGCN(nn.Module):
 
         # ---------- Concatenate for homogeneous LGConv ----------
         x = torch.cat([user_h, item_h], dim=0)
+        print("x.shape:", x.shape)
+        print("adjusted_edge_index.min(), max():", self.adjusted_edge_index.min().item(),
+              self.adjusted_edge_index.max().item())
+        print("num_users (buffer):", self.num_users)
+        assert self.adjusted_edge_index.min() >= 0
+        assert self.adjusted_edge_index.max() < x.size(0), "Edge index out of bounds!"
 
         # ---------- Propagation ----------
         xs = [x]
