@@ -34,8 +34,8 @@ class PathsConfig:
     dataset_size: str = "50m"
     data_dir: str = field(init=False)
     processed_dir: str = "processed_data"
-    gnn_models: str = "models/gnn"
-    ann_models: str = "models/ann"
+    gnn_models_dir: str = "models/GNN"
+    ann_models_dir: str = "models/ANN"
 
     data_cols_file: str = field(init=False)
     data_stats_file: str = field(init=False)
@@ -69,8 +69,8 @@ class PathsConfig:
 
     def __post_init__(self):
         os.makedirs(self.processed_dir, exist_ok=True)
-        os.makedirs(self.gnn_models, exist_ok=True)
-        os.makedirs(self.ann_models, exist_ok=True)
+        os.makedirs(self.gnn_models_dir, exist_ok=True)
+        os.makedirs(self.ann_models_dir, exist_ok=True)
 
         self.data_dir = f"project_data/YambdaData{self.dataset_size}/"
         self.data_cols_file = f"{self.data_dir}/yambda_columns.csv"
@@ -103,11 +103,11 @@ class PathsConfig:
             self.raw_undislikes_file
         ]
 
-        self.trained_gnn = f"{self.gnn_models}/best_model.pth"
-        self.user_embeddings_gnn = f"{self.gnn_models}/user_embeddings.pt"
-        self.song_embeddings_gnn = f"{self.gnn_models}/song_embeddings.pt"
+        self.trained_gnn = f"{self.gnn_models_dir}/best_model.pth"
+        self.user_embeddings_gnn = f"{self.gnn_models_dir}/user_embeddings.pt"
+        self.song_embeddings_gnn = f"{self.gnn_models_dir}/song_embeddings.pt"
 
-        self.ann_index = f"{self.ann_models}/index"
+        self.ann_index = f"{self.ann_models_dir}/index"
 
 
 # -------------------
@@ -122,13 +122,13 @@ class PreprocessingConfig:
         "unlike": 4,
         "undislike": 5
     })
-    interaction_threshold: int = 5
+    interaction_threshold: int = 500
     weights: Dict[str, float] = field(default_factory=lambda: {
-        "listens": 1.0,
-        "likes": 3.0,
-        "dislikes": -3.0,
-        "unlikes": -1.0,
-        "undislikes": -1.0
+        "listens": 0.7,
+        "likes": 1.0,
+        "dislikes": -1,
+        "unlikes": -0.5,
+        "undislikes": 0.5
     })
     split_ratios: Dict[str, float] = field(default_factory=lambda: {
         "train": 0.8,
