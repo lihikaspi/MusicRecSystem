@@ -135,7 +135,11 @@ class PreprocessingConfig:
         "val": 0.1,
         "test": 0.1
     })
-    split_paths: Dict[str, str] = field(default_factory=dict)
+    split_paths: Dict[str, str] = field(default_factory=lambda: {
+        "train": f"{config.paths.processed_dir}/train.parquet",
+        "val": f"{config.paths.processed_dir}/val.parquet",
+        "test": f"{config.paths.processed_dir}/test.parquet"
+    })
 
 
 # -------------------
