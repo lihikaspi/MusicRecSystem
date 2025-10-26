@@ -18,30 +18,18 @@ Created By: Lihi Kaspi, Harel Oved & Niv Maman
 7. [Project Pipeline](#project-pipeline)
    - [Stage 1: Downloading the Dataset](#stage-1-downloading-the-dataset)
    - [Stage 2: Preparing the Data for the GNN](#stage-2-preparing-the-data-for-the-gnn)
-     - [1. Data Preprocessing](#1-data-preprocessing)
-     - [2. Build Graph](#2-build-graph)
    - [Stage 3: Training and Evaluating the GNN](#stage-3-training-and-evaluating-the-gnn)
-     - [1. Training](#1-training)
-     - [2. Evaluation](#2-evaluation)
    - [Stage 4: ANN Search and Retrieval](#stage-4-ann-search-and-retrieval)
-     - [1. ANN Indexing and Retrieval](#1-ann-indexing-and-retrieval)
-     - [2. Retrieval Evaluation](#2-retrieval-evaluation)
 
 ---
 
 ## Overview
 
-This project implements a scalable music recommendation system using the Yandex Yambda dataset. 
-The system combines Graph Neural Networks (GNNs) with Approximate Nearest Neighbor (ANN) search to provide efficient and accurate music recommendations.
-
-The workflow includes downloading and preprocessing the dataset, constructing a user-song bipartite graph, training a GNN to learn user and song embeddings, and performing ANN-based recommendation retrieval with comprehensive evaluation.
-
-**Key Features:**
-- Handles large-scale music datasets (50M to 5B interactions)
-- Graph-based representation of user-song interactions
-- GNN-powered embedding learning
-- Fast ANN-based recommendation retrieval
-- Comprehensive evaluation metrics
+This project implements a large-scale music recommendation system using the Yandex Yambda dataset.
+It combines Graph Neural Networks (GNNs) with Approximate Nearest Neighbor (ANN) search to deliver efficient and accurate 
+recommendations across millions of user–song interactions.
+The workflow includes dataset preprocessing, user–song graph construction, GNN-based embedding training, and ANN-powered 
+retrieval and evaluation.
 
 ---
 
@@ -78,28 +66,33 @@ More details about the dataset can be found here: [Yandex Yambda dataset](https:
 
 ### Dataset Components
 
-- **`multi_event.parquet`**: Unified table with multiple interaction types (`listen`, `like`, `unlike`, `dislike`, `undislike`). May contain null values.
-- **Single-event records**: Cleaned files for each interaction type
-- **Audio embeddings**: Pre-computed audio embeddings per track
+- **multi-event file**: Unified table with multiple interaction types (`listen`, `like`, `unlike`, `dislike`, `undislike`).
+- **Single-event files**: Files containing interactions of a singular type
+- **Audio embeddings**: Precomputed audio embeddings per track
 - **Song mappings**: Song-album and song-artist relationship mappings
 
 ### Dataset Scales
 
-- **50m**: Lightweight version, suitable for experiments and development
-- **500m**: Medium-scale dataset for comprehensive testing
-- **5b**: Full dataset, production-scale but very resource-intensive
+The dataset come in three scales, each containing user–song interactions along with likes and dislikes:
+
+- **50m**: 10,000 users, 934,057 songs, almost 50m interactions in total.
+- **500m**: 100,000 users, 3,004,578 songs, almost 500m interactions in total.
+- **5b**: 1,000,000 users, 9,390,623 songs, almost 5b interactions in total.
+
+Each dataset size allows experimentation at a different scale, from small tests to large-scale model training.
 
 ---
 
 ## Setup and Requirements
 
-Ensure your environment has enough disk space for the dataset size you plan to download (`50m`, `500m`, or `5b`).
-
-**GPU Required**: This project requires a CUDA-compatible GPU for GNN training and ANN indexing. CPU-only runs are not supported.
-
-> Python version: Python 3.10+
+Before running the project, ensure your environment meets the following requirements:
+- **Disk Space:** Enough space for the dataset you plan to download.
+- **GPU:** A CUDA-compatible GPU is required for GNN training and ANN indexing. CPU-only runs are not supported.
+- **Python:** Python 3.10 or higher.
 
 ### Installing Dependencies
+
+Install all required Python packages:
 
 ```bash
 pip install -r requirements.txt
@@ -107,31 +100,17 @@ pip install -r requirements.txt
 
 ### Installing PyTorch
 
-The requirements.txt includes PyTorch with CUDA 11.8 support by default. For other CUDA versions, modify the PyTorch versions in `requirements.txt`:
-
-- **CUDA 12.1**: Change `+cu118` to `+cu121` 
-- **CUDA 12.8**: Change `+cu118` to `+cu128`
-
-Check your CUDA version:
-
-```bash
-nvidia-smi
-```
-
-Example for manual CUDA 12.8 installation:
-
-```bash
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
-```
+The `requirements.txt` includes PyTorch 2.0.1 with CUDA 11.7 support by default.     
+For other CUDA versions, modify the PyTorch versions in `requirements.txt`.
 
 ### Installing PyTorch Geometric
 
 > Version must match PyTorch
 
-PyTorch Geometric is included in requirements.txt with the necessary dependencies:
-- `torch-geometric>=2.3.0`
-- `torch-scatter>=2.1.0` 
-- `torch-sparse>=0.6.17`
+PyTorch Geometric is included in `requirements.txt` with the necessary dependencies:
+- `torch-geometric==2.6.1`
+- `torch-scatter==2.1.2+pt20cu117`
+- `torch-sparse==0.6.18+pt20cu117`
 
 For additional installation guidance, follow the official guide:
 [pytorch-geometric installation instructions](https://pytorch-geometric.readthedocs.io/en/latest/notes/installation.html)
@@ -176,16 +155,25 @@ print(f"PyG version: {torch_geometric.__version__}")
 ```
 ├── GNN_class.py                # Graph Neural Network implementation
 ├── train_GNN.py                # GNN training class
-├── eval_GNN.py                 # GNN evaluation class
-├── user_embeddings.pt          # User embeddings from the GNN
-├── song_embeddings.pt          # Song embeddings from the GNN
-└── best_model.pt               # Best model checkpoint
+└── eval_GNN.py                 # GNN evaluation class
 ```
 
 ### ANN Search (`ANN_search/`)
 ```
 ├── ANN_index_recs.py           # ANN indexing and recommendation
 └── ANN_eval.py                 # Recommendation evaluation metrics
+```
+
+### Trained Models (`models/`)
+
+```
+├── GNN/
+    ├── best_model.pth          # best GNN models based on validation evaluation
+    ├── user_embeddings.pt      # final user embeddings
+    └── song_embessings.pt      # final song embeddings
+└── ANN/
+    └── index                   # ANN index
+    
 ```
 
 ### Processed Data (`processed_data/`)
@@ -221,26 +209,35 @@ print(f"PyG version: {torch_geometric.__version__}")
 
 ## Configuration
 
-The `config.py` file contains all configuration parameters:
+All configuration parameters are defined using Python dataclasses in `config.py` and organized into logical sections:
 
-- **Dataset parameters**: Size, type, download options
-- **Processing parameters**: Interaction thresholds, event-type weights, split ratios
-- **GNN hyperparameters**: TBD
-- **ANN parameters**: TBD
-- **File paths**: Input/output directories
+- **Dataset parameters:** Size, type, download options
+- **Pipeline:** Order of the stages for the main pipeline runner
+- **File paths:** Input/output directories
+- **Preprocessing parameters:** Interaction threshold, event-type weights, split ratios
+- **GNN hyperparameters:** PyTorch device, embeddings dimension, number of layers, training parameters, etc.
+- **ANN parameters:** Top-K recommendations to retrieve
+
+The pipeline contains a single global `config` object used throughout all the scripts.
 
 Example key configurations:
 ```python
 # Dataset
-DATASET_SIZE = "50m"              # Options: "50m", "500m", "5b"
-DATASET_TYPE = "flat"             # Options: "flat", "sequential"
-DOWNLOAD_FULL_DATASET = False     # Download single-event files
+config.dataset.dataset_size         # "50m", "500m", "5b"
+config.dataset.dataset_type         # "flat" or "sequential"
+config.dataset.download_full        # True/False
 
-# Processing
-INTERACTION_THRESHOLD = 5         # Minimum interactions per user
-SPLIT_RATIOS = {"train": 0.8, "val": 0.0, "test": 0.2}
+# Preprocessing
+config.preprocessing.interaction_threshold     
+config.preprocessing.split_ratios   # dict with train, val and test
 
-# more examples about the GNN and ANN TBD
+# GNN
+config.gnn.device                   # "cuda" if available
+config.gnn.embed_dim              
+config.gnn.layers_num
+
+# ANN
+config.ann.top_k                    # number of recommendations to retrieve
 ```
 
 ---
@@ -288,11 +285,10 @@ To download the entire dataset (including the single-event files) update the `co
 The dataset size, type and save directory are also set in the `config.py` file. Example:
 
 ```python
-# config.py
-DATASET_SIZE = "50m"        # Options: "50m", "500m", "5b"
-DATASET_TYPE = "flat"       # Options: "flat", "sequential"
-DOWNLOAD_FULL_DATASET = False
-DATA_DIR = f"project_data/YambdaData{DATASET_SIZE}/"
+config.dataset.dataset_size         # "50m", "500m", "5b"
+config.dataset.dataset_type         # "flat" or "sequential"
+config.dataset.download_full        # True/False
+config.paths.data_dir               # raw data folder
 ```
 
 Additional scripts:
@@ -326,11 +322,12 @@ Process the interactions file (`EventProcessor` defined in `event_processor.py`)
 - Split the interactions into train, validation, and test sets according to a given ratio.
 
 To save the intermediate filtered file replace the code with the following:
+
 ```python
 # run_GNN_prep.py
 
-# processor.filter_events(INTERACTION_THRESHOLD)
-processor.filter_events(INTERACTION_THRESHOLD, INTERACTIONS_FILE)
+# processor.filter_events(config.preprocessing.interaction_threshold)
+processor.filter_events(config.preprocessing.interaction_threshold, config.paths.interactions_file)
 ```
 
 Create the graph properties information (`EdgeAssembler` defined in `edge_assembler.py`):
@@ -341,11 +338,12 @@ Create the graph properties information (`EdgeAssembler` defined in `edge_assemb
 - Turn the event names into categories.
 
 To save the intermediate ready-to-build edges file replace the code with the following:
+
 ```python
 # run_GNN_prep.py
 
 # aggregator.assemble_edges()
-aggregator.assemble_edges(EDGES_FILE)
+aggregator.assemble_edges(config.paths.train_edges_file)
 ```
 
 #### 2. Build Graph
@@ -363,14 +361,9 @@ The save paths and hyperparameters such as the interaction threshold and split r
 Example:
 
 ```python
-INTERACTION_THRESHOLD = 5
-SPLIT_RATIOS = {
-    "train": 0.8,
-    "val": 0.0,
-    "test": 0.2
-}
-PROCESSED_DIR = "processed_data"
-TRAIN_GRAPH_FILE = f"{PROCESSED_DIR}/graph.pt"
+config.preprocessing.interaction_threshold  
+config.preprocessing.split_ratios
+config.paths.train_graph_file
 ```
 
 ### Stage 3: Training and Evaluating the GNN
@@ -379,7 +372,7 @@ Run the GNN training and evaluation pipeline:
 
 ```bash
 # via the top-level runner (recommended)
-python run_all.py --stage train_gnn
+python run_all.py --stage gnn_train
 
 # directly
 python run_GNN_train.py
@@ -419,19 +412,20 @@ The save paths and hyperparameters for the GNN can be found in the `config.py` f
 Example:
 
 ```python
-EMBED_DIM = 128
-NUM_LAYERS = 3
-LR = 0.001
-BATCH_SIZE = 1024
-NUM_EPOCHS = 20
-K_HIT = 50
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+config.gnn.device
+config.gnn.embed_dim
+config.gnn.num_layers
 
-GNN_MODEL = "GNN_model"
-TRAINED_GNN = f"{GNN_MODEL}/best_model.pth"
+config.paths.trained_gnn
+
+# TODO: update when done
+# LR = 0.001
+# BATCH_SIZE = 1024
+# NUM_EPOCHS = 20
+# K_HIT = 50
 ```
 
-### Stage 4: ANN search and retrieval
+### Stage 4: ANN Search and Retrieval
 
 Run the ANN search and retrieval pipeline:
 
