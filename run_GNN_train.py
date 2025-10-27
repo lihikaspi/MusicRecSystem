@@ -1,8 +1,23 @@
 import torch
+import os
 from GNN_model.train_GNN import GNNTrainer
 from GNN_model.GNN_class import LightGCN
 from GNN_model.eval_GNN import GNNEvaluator
 from config import config
+
+
+def check_prev_files():
+    needed = [config.paths.audio_embeddings_file, config.paths.train_graph_file, config.paths.test_set_file]
+    fail = False
+    for file in needed:
+        if not os.path.exists(file):
+            print("Couldn't find file: {}".format(file))
+            fail = True
+    if fail:
+        raise FileNotFoundError("Needed files are missing, run previous stage to create the needed files!")
+    else:
+        print("All needed files are present! starting GNN training ... ")
+
 
 def test_evaluation(model: LightGCN, train_graph, k_hit: int):
     # Evaluate using the test parquet file
@@ -68,4 +83,5 @@ def main():
 
 
 if __name__ == "__main__":
+    check_prev_files()
     main()

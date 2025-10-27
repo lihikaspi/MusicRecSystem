@@ -14,7 +14,7 @@ if __name__ == "__main__":
         "--stage",
         type=str,
         help=(
-            "Run a specific stage by name (download, gnn_prep, train_gnn, ann_search) "
+            "Run a specific stage by name (download, gnn_prep, gnn_train, ann_search) "
             "or by number (1–4). If omitted, all stages run."
         )
     )

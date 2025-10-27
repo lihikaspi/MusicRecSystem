@@ -1,8 +1,23 @@
 import duckdb
+import os
 from GNN_prep.event_processor import EventProcessor
 from GNN_prep.edge_assembler import EdgeAssembler
 from GNN_prep.build_graph import GraphBuilder
 from config import config
+
+
+def check_prev_files():
+    needed = [config.paths.raw_multi_event_file, config.paths.audio_embeddings_file,
+              config.paths.artist_mapping_file, config.paths.album_mapping_file]
+    fail = False
+    for file in needed:
+        if not os.path.exists(file):
+            print("Couldn't find file: {}".format(file))
+            fail = True
+    if fail:
+        raise FileNotFoundError("Needed files are missing, run previous stage to create the needed files!")
+    else:
+        print("All needed files are present! starting Preprocessing ... ")
 
 
 def main():
@@ -29,4 +44,5 @@ def main():
 
 
 if __name__ == "__main__":
+    check_prev_files()
     main()
