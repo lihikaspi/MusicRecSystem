@@ -1,6 +1,6 @@
 import os
 from config import config
-from ANN_search.ANN_index import build_ann_index
+from ANN_search.ANN_index import retrieve_recs
 
 def check_prev_files():
     needed = [config.paths.song_embeddings_gnn, config.paths.audio_embeddings_gnn,
@@ -17,7 +17,7 @@ def check_prev_files():
 
 
 def main():
-  recommended_song_ids, recommended_scores = build_ann_index(config)
+  recommended_song_ids, recommended_scores = retrieve_recs(config)
 
 
 if __name__ == "__main__":

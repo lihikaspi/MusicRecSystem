@@ -160,7 +160,7 @@ print(f"PyG version: {torch_geometric.__version__}")
 
 ### ANN Search (`ANN_search/`)
 ```
-├── ANN_index_recs.py           # ANN indexing and recommendation
+├── ANN_index.py                # ANN indexing and recommendation
 └── ANN_eval.py                 # Recommendation evaluation metrics
 ```
 
@@ -172,7 +172,8 @@ print(f"PyG version: {torch_geometric.__version__}")
     ├── user_embeddings.pt      # final user embeddings
     └── song_embessings.pt      # final song embeddings
 └── ANN/
-    └── index                   # ANN index
+    ├── index.faiss             # ANN index
+    └── song_ids.npy            # song IDs
     
 ```
 

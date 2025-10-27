@@ -13,7 +13,7 @@ def load_embeddings(config: Config):
 
     audio_df = pd.read_parquet(config.paths.cold_start_songs_file)
     song_ids_audio = audio_df['item_idx'].to_numpy()
-    song_embs_audio = np.vstack(audio_df['item_normalized_embed'].to_numpy())
+    song_embs_audio = np.vstack(audio_df['item_normalized_embed'].to_numpy()).astype('float32')
 
     all_song_embs = np.vstack([song_embs_gnn, song_embs_audio])
     all_song_ids = np.concatenate([song_ids_gnn, song_ids_audio])
@@ -21,7 +21,7 @@ def load_embeddings(config: Config):
     return user_embs, all_song_embs, all_song_ids
 
 
-def build_faiss_index(song_embs, nlist, nprobe):
+def build_faiss_index(song_embs, nlist: int, nprobe: int):
     faiss.normalize_L2(song_embs)
     d = song_embs.shape[1]
 
@@ -41,7 +41,7 @@ def build_faiss_index(song_embs, nlist, nprobe):
     return index
 
 
-def save_index(index, song_ids, index_path, song_ids_path):
+def save_index(index, song_ids, index_path: str, song_ids_path: str):
     faiss.write_index(index, index_path)
     np.save(song_ids_path, song_ids)
     print(f"Index saved to {index_path}, song IDs saved to {song_ids_path}")
@@ -53,7 +53,7 @@ def load_index(index_path, ids_path):
     return index, song_ids
 
 
-def recommend_topk(index, user_embs, song_ids, k):
+def recommend_topk(index, user_embs, song_ids, k: int):
     faiss.normalize_L2(user_embs)
     D, I = index.search(user_embs, k)
     recommended_song_ids = song_ids[I]
@@ -61,7 +61,7 @@ def recommend_topk(index, user_embs, song_ids, k):
     return recommended_song_ids, recommended_scores
 
 
-def build_ann_index(config: Config):
+def retrieve_recs(config: Config):
     user_embs, song_embs, song_ids = load_embeddings(config)
     index = build_faiss_index(song_embs, config.ann.nlist, config.ann.nprobe )
     save_index(index, song_ids, config.paths.ann_index, config.paths.ann_song_ids)
