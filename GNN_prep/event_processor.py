@@ -101,24 +101,30 @@ class EventProcessor:
             self.con.execute(f"COPY (SELECT * FROM events_with_idx) TO '{output_path}' (FORMAT PARQUET)")
             print(f'Filtered multi event file saved to {output_path}')
 
-
     def _save_cold_start_songs(self, cold_start_songs_path: str):
-        query = f"""
-        CREATE TEMPORARY TABLE cold_start_songs AS
-        SELECT 
-                d,item_id AS item_id, d.item_idx AS item_idx, 
-                emb.normalized_embed AS item_normalized_embed
-        FROM split_data d, 
-        LEFT JOIN read_parquet('{self.embeddings_path}') emb
-            ON d.item_id = emb.item_id
-        WHERE d.item_id NOT IN (
-            SELECT DISTINCT item_id FROM split_data WHERE split = 'test'
-        )
-        AND d.split IN ('train', 'val')
-        """
+        self.con.execute("""
+            CREATE TEMPORARY TABLE test_items AS
+            SELECT DISTINCT item_id 
+            FROM split_data 
+            WHERE split = 'test'
+        """)
 
-        self.con.execute(query)
-        self.con.execute(f"COPY (SELECT * FROM cold_start_songs) TO '{cold_start_songs_path}' (FORMAT PARQUET)")
+        self.con.execute(f"""
+            CREATE TEMPORARY TABLE cold_start_songs AS
+            SELECT d.item_id, d.item_idx, emb.normalized_embed
+            FROM split_data d
+            LEFT JOIN read_parquet('{self.embeddings_path}') emb
+                ON d.item_id = emb.item_id
+            LEFT JOIN test_items t
+                ON d.item_id = t.item_id
+            WHERE d.split IN ('train', 'val') 
+              AND t.item_id IS NULL
+        """)
+
+        self.con.execute(f"""
+            COPY (SELECT * FROM cold_start_songs) 
+            TO '{cold_start_songs_path}' (FORMAT PARQUET)
+        """)
         print(f'Cold start songs file saved to {cold_start_songs_path}')
 
 

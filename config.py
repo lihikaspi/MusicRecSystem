@@ -61,7 +61,7 @@ class PathsConfig:
     train_graph_file: str = field(init=False)
 
     raw_data_files: List[str] = field(init=False)
-    split_ratios_file: str = field(init=False)
+    split_paths: Dict[str, str] = field(init=False)
 
     trained_gnn: str = field(init=False)
     user_embeddings_gnn: str = field(init=False)

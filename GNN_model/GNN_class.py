@@ -5,11 +5,7 @@ from torch_geometric.nn import LGConv
 from torch_geometric.data import HeteroData
 from config import Config
 
-
 class EdgeWeightMLP(nn.Module):
-    """
-    MLP to compute edge weights from numeric edge attributes and initial weight.
-    """
     def __init__(self, config: Config):
         super().__init__()
         self.mlp = nn.Sequential(
@@ -25,104 +21,114 @@ class EdgeWeightMLP(nn.Module):
 
 class LightGCN(nn.Module):
     def __init__(self, data: HeteroData, config: Config):
-        """
-        Args:
-            data: HeteroData containing 'user' and 'item' nodes and 'interacts' edges
-            lambda_align: weight for optional alignment loss between item embeddings and projected audio
-        """
         super().__init__()
         self.config = config
         self.num_layers = config.gnn.num_layers
         self.lambda_align = config.gnn.lambda_align
         self.embed_dim = config.gnn.embed_dim
 
-        # ---------- Node embeddings ----------
-        num_users = data['user'].user_id.max().item() + 1
-        num_artists = data['item'].artist_id.max().item() + 1
-        num_albums = data['item'].album_id.max().item() + 1
+        # Node counts
+        self.num_users = data['user'].num_nodes
+        self.num_items = data['item'].num_nodes
 
-        self.user_emb = nn.Embedding(num_users, self.embed_dim)
+        # Embeddings
+        self.user_emb = nn.Embedding(self.num_users, self.embed_dim)
+
+        self.register_buffer('item_audio_emb', data['item'].x)
+        self.register_buffer('artist_ids', data['item'].artist_id)
+        self.register_buffer('album_ids', data['item'].album_id)
+
+        num_artists = self.artist_ids.max().item() + 1
+        num_albums = self.album_ids.max().item() + 1
         self.artist_emb = nn.Embedding(num_artists, self.embed_dim)
         self.album_emb = nn.Embedding(num_albums, self.embed_dim)
 
-        # Fixed audio embeddings
-        self.register_buffer('item_audio_emb', data['item'].x)
-        self.audio_proj = nn.Linear(data['item'].x.size(1), self.embed_dim, bias=False)
+        self.audio_proj = nn.Linear(self.item_audio_emb.size(1), self.embed_dim, bias=False)
 
-        # ---------- Initialize embeddings ----------
         nn.init.xavier_uniform_(self.user_emb.weight)
         nn.init.xavier_uniform_(self.artist_emb.weight)
         nn.init.xavier_uniform_(self.album_emb.weight)
         nn.init.xavier_uniform_(self.audio_proj.weight)
 
-        # ---------- Edge MLP ----------
-        self.edge_mlp = EdgeWeightMLP(config)
-
-        # ---------- LGConv layers ----------
-        self.convs = nn.ModuleList([LGConv() for _ in range(self.num_layers)])
-
-        # ---------- Precompute static components ----------
+        # Edge features
         self.register_buffer('edge_index', data['user', 'interacts', 'item'].edge_index)
         self.register_buffer('edge_attr', data['user', 'interacts', 'item'].edge_attr)
         self.register_buffer('edge_weight_init', data['user', 'interacts', 'item'].edge_weight_init)
-        self.register_buffer('artist_ids', data['item'].artist_id)
-        self.register_buffer('album_ids', data['item'].album_id)
-
-        # Precompute edge features and adjusted edge indices
         edge_features = torch.cat([self.edge_attr, self.edge_weight_init.unsqueeze(1)], dim=1)
         self.register_buffer('edge_features', edge_features)
 
-        # Adjust edge_index for concatenated tensor (user offset = 0, item offset = num_users)
-        # Only offset item indices if they start from 0 (i.e., not already globally indexed)
-        if self.edge_index[1].max() < data['item'].num_nodes:
-            adjusted_edge_index = self.edge_index.clone()
-            adjusted_edge_index[1] += num_users
-        else:
-            adjusted_edge_index = self.edge_index.clone()
+        # Precompute item embeddings (CPU)
+        self.register_buffer('item_h_cache', self.item_audio_emb +
+                             self.artist_emb(self.artist_ids) +
+                             self.album_emb(self.album_ids))
 
-        self.register_buffer('adjusted_edge_index', adjusted_edge_index)
-        print( f"[DEBUG] adjusted_edge_index range: {adjusted_edge_index.min().item()} - {adjusted_edge_index.max().item()}")
-        print(f"[DEBUG] x total nodes (users+items): {num_users + data['item'].num_nodes}")
+        # Precompute edge weights (CPU)
+        self.edge_mlp = EdgeWeightMLP(config)
+        with torch.no_grad():
+            self.register_buffer('edge_weight_cache', self.edge_mlp(self.edge_features))
 
-        self.num_users = num_users
+        # LGConv layers
+        self.convs = nn.ModuleList([LGConv() for _ in range(self.num_layers)])
 
-    def forward(self, return_projections=False):
-        # ---------- Initial embeddings ----------
-        user_h = self.user_emb.weight
-        item_h = self.item_audio_emb + self.artist_emb(self.artist_ids) + self.album_emb(self.album_ids)
 
-        # Optional projected audio for alignment (only compute if needed)
-        projected_audio = None
-        if self.lambda_align > 0 or return_projections:
-            projected_audio = self.audio_proj(self.item_audio_emb)
+    def _alignment_loss(self, u_emb, i_emb_pos):
+        """
+        Align user embeddings with their corresponding positive item embeddings.
+        u_emb: [batch_size, embed_dim]
+        i_emb_pos: [batch_size, embed_dim]  (only positive items)
+        """
+        if u_emb is None or i_emb_pos is None:
+            return torch.tensor(0.0, device=u_emb.device if u_emb is not None else i_emb_pos.device)
 
-        # ---------- Compute edge weights ----------
-        edge_weight = self.edge_mlp(self.edge_features)
+        # Cosine similarity along embedding dimension
+        cos_sim = F.cosine_similarity(u_emb, i_emb_pos, dim=-1)  # [batch_size]
 
-        # ---------- Concatenate for homogeneous LGConv ----------
-        x = torch.cat([user_h, item_h], dim=0)
-        print("x.shape:", x.shape)
-        print("adjusted_edge_index.min(), max():", self.adjusted_edge_index.min().item(),
-              self.adjusted_edge_index.max().item())
-        print("num_users (buffer):", self.num_users)
-        assert self.adjusted_edge_index.min() >= 0
-        assert self.adjusted_edge_index.max() < x.size(0), "Edge index out of bounds!"
+        # Loss: maximize similarity → minimize (1 - cos_sim)
+        return (1 - cos_sim).mean()
 
-        # ---------- Propagation ----------
-        xs = [x]
+    def forward(self, user_idx=None, item_idx=None, pos_item_idx=None, return_projections=False):
+        device = next(self.parameters()).device
+
+        # Ensure edge_index and edge_weight are on the same device
+        edge_index = self.edge_index.to(device)
+        edge_weight = self.edge_weight_init.to(device) if self.edge_weight_init is not None else None
+
+        # Combine all input node indices into one tensor (user + all items in batch)
+        batch_nodes = torch.cat([user_idx, item_idx], dim=0).unique() if user_idx is not None and item_idx is not None \
+            else user_idx if user_idx is not None \
+            else item_idx if item_idx is not None \
+            else torch.arange(self.num_users + self.num_items, device=device)
+
+        # Mask edges connecting batch nodes
+        mask_src = torch.isin(edge_index[0], batch_nodes)
+        mask_dst = torch.isin(edge_index[1], batch_nodes)
+        mask = mask_src & mask_dst
+
+        edge_index_sub = edge_index[:, mask]
+        edge_weight_sub = edge_weight[mask] if edge_weight is not None else None
+
+        # Compute embeddings
+        user_embed = self.user_emb.weight
+        item_embed = self.item_audio_emb + self.artist_emb(self.artist_ids) + self.album_emb(self.album_ids)
+        item_embed = self.audio_proj(item_embed)
+        x = torch.cat([user_embed, item_embed], dim=0)
+
+        # LGConv layers
         for conv in self.convs:
-            x = conv(x, self.adjusted_edge_index, edge_weight=edge_weight)
-            xs.append(x)
+            x = conv(x, edge_index_sub, edge_weight=edge_weight_sub)
+        x = F.normalize(x, p=2, dim=1)
 
-        # Use learnable combination weights instead of simple mean
-        x_final = torch.stack(xs, dim=0).mean(dim=0)  # Can be replaced with learnable weights
+        # Slice embeddings for batch users and items
+        u_emb = x[user_idx] if user_idx is not None else None
+        i_emb = x[item_idx] if item_idx is not None else None
 
-        final_user_h = x_final[:self.num_users]
-        final_item_h = x_final[self.num_users:]
+        # Alignment loss only on positive items
+        if return_projections and u_emb is not None and pos_item_idx is not None:
+            pos_emb = x[pos_item_idx]
+            align_loss = (1 - F.cosine_similarity(u_emb, pos_emb, dim=-1)).mean()
+        else:
+            align_loss = torch.tensor(0.0, device=device)
 
-        # ---------- Optional alignment loss ----------
-        align_loss = torch.tensor(0.0, device=x.device)
-        if self.lambda_align > 0 and projected_audio is not None:
-            align_loss = F.mse_loss(final_item_h, projected_audio)
+        return u_emb, i_emb, align_loss
 
-        return final_user_h, final_item_h, align_loss
+

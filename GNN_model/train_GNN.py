@@ -1,6 +1,7 @@
 import torch
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
+import torch.nn.functional as F
 import pyarrow.parquet as pq
 from torch_geometric.data import HeteroData
 from tqdm import tqdm
@@ -9,20 +10,20 @@ from GNN_model.eval_GNN import GNNEvaluator
 from config import Config
 
 
-# BPR Dataset
 class BPRDataset(Dataset):
     """
     Dataset for BPR training.
     Performs negative sampling on the fly.
+    Expects `interactions` as an (N,2) ndarray of (user_idx, item_idx).
     """
     def __init__(self, interactions, num_items, neg_samples_per_pos):
         self.user_item = interactions
-        self.num_items = num_items
-        self.neg_samples_per_pos = neg_samples_per_pos
+        self.num_items = int(num_items)
+        self.neg_samples_per_pos = int(neg_samples_per_pos)
 
         self.user2items = {}
         for u, i in interactions:
-            self.user2items.setdefault(u, set()).add(i)
+            self.user2items.setdefault(int(u), set()).add(int(i))
 
         # Precompute some negative samples to reduce online computation
         self.precomputed_negatives = {}
@@ -33,7 +34,8 @@ class BPRDataset(Dataset):
         for user, pos_items in self.user2items.items():
             neg_pool = []
             attempts = 0
-            while len(neg_pool) < self.neg_samples_per_pos * 100 and attempts < 1000:  # Safety limit
+            # keep a reasonably large pool; safe-guard with attempts limit
+            while len(neg_pool) < self.neg_samples_per_pos * 100 and attempts < 1000:
                 candidate = np.random.randint(0, self.num_items)
                 if candidate not in pos_items:
                     neg_pool.append(candidate)
@@ -45,6 +47,8 @@ class BPRDataset(Dataset):
 
     def __getitem__(self, idx):
         u, i_pos = self.user_item[idx]
+        u = int(u)
+        i_pos = int(i_pos)
 
         # Use precomputed negatives when available
         if u in self.precomputed_negatives and self.precomputed_negatives[u]:
@@ -52,139 +56,141 @@ class BPRDataset(Dataset):
         else:
             # Fallback to online sampling
             while True:
-                i_neg = np.random.randint(0, self.num_items)
+                i_neg = int(np.random.randint(0, self.num_items))
                 if i_neg not in self.user2items[u]:
                     break
 
-        return u, i_pos, i_neg
+        return torch.tensor(u, dtype=torch.long), torch.tensor(i_pos, dtype=torch.long), torch.tensor(i_neg, dtype=torch.long)
 
 
-# Trainer class
 class GNNTrainer:
     def __init__(self, model: LightGCN, train_graph: HeteroData, config: Config):
         """
-        Args:
-            model: LightGCN instance
-            train_graph: HeteroData train graph
-            config: Config object
+        model: LightGCN instance (already constructed)
+        train_graph: HeteroData with 'user' and 'item' nodes and ('user','interacts','item') edges
+        config: Config object
         """
+        self.model = model
+        self.train_graph = train_graph  # keep on CPU
         self.config = config
-
         self.device = config.gnn.device
-        self.model = model.to(self.device)
-        self.train_graph = train_graph.to("cpu")
-        self.batch_size = config.gnn.batch_size
-        self.lr = config.gnn.lr
         self.lambda_align = config.gnn.lambda_align
+        self.batch_size = config.gnn.batch_size
 
-        # Load validation interactions
-        self.val_parquet = config.paths.val_set_file
-        self.val_interactions = self._load_interactions(self.val_parquet)
-        self.num_items = train_graph['item'].x.shape[0]
-
-        # Prepare train edges from heterograph
-        edge_index = train_graph['user', 'interacts', 'item'].edge_index
-        user_idx, item_idx = edge_index.cpu().numpy()
-        train_edges = np.stack([user_idx, item_idx], axis=1)
-
-        self.dataset = BPRDataset(train_edges, self.num_items, config.gnn.neg_samples_per_pos)
-        self.loader = DataLoader(
-            self.dataset,
-            batch_size=self.batch_size,
-            shuffle=True,
-            num_workers=config.gnn.num_workers,
-            pin_memory=True if self.device == 'cuda' else False
-        )
-
+        # optimizer & scheduler
         self.optimizer = torch.optim.AdamW(
             self.model.parameters(),
-            lr=self.lr,
-            weight_decay=config.gnn.weight_decay
+            lr=config.gnn.lr,
+            weight_decay=getattr(config.gnn, "weight_decay", 0.0)
         )
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             self.optimizer, mode='max', factor=0.5, patience=3, verbose=True
         )
 
+        # validation / eval settings
+        self.val_parquet = config.paths.val_set_file
         self.evaluator = GNNEvaluator(self.model, self.train_graph, self.device, config.gnn.eval_event_map)
 
-        # Cache embeddings computation
+        # build BPR dataset from the heterograph edges
+        edge_index = train_graph['user', 'interacts', 'item'].edge_index  # tensor[2, E] - global ids: users 0..U-1, items 0..I-1
+        user_idx_np, item_idx_np = edge_index.cpu().numpy()
+        train_edges = np.stack([user_idx_np.astype(np.int64), item_idx_np.astype(np.int64)], axis=1)
+
+        self.num_items = int(train_graph['item'].num_nodes)
+
+        self.dataset = BPRDataset(train_edges, self.num_items, config.gnn.neg_samples_per_pos)
+
+        # DataLoader for BPR dataset (standard PyTorch DataLoader)
+        pin_memory = True if ('cuda' in str(self.device)) else False
+        self.loader = DataLoader(
+            self.dataset,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=getattr(config.gnn, "num_workers", 0),
+            pin_memory=pin_memory
+        )
+
+        # caches
         self._cached_embeddings = None
         self._cache_valid = False
-
-    @staticmethod
-    def _load_interactions(parquet_path: str):
-        df = pq.read_table(parquet_path).to_pandas()
-        return df[['user_idx', 'item_idx', 'event_type']].to_numpy()
 
     @staticmethod
     def _bpr_loss(u_emb, pos_emb, neg_emb):
         pos_score = (u_emb * pos_emb).sum(dim=1)
         neg_score = (u_emb * neg_emb).sum(dim=1)
-        return torch.nn.functional.softplus(-(pos_score - neg_score)).mean()
+        return F.softplus(-(pos_score - neg_score)).mean()
 
     def _get_embeddings(self):
         """ Get embeddings with caching for efficiency during evaluation """
         if not self._cache_valid or self._cached_embeddings is None:
             self.model.eval()
             with torch.no_grad():
-                user_emb, item_emb, _ = self.model()
+                user_emb, item_emb, _ = self.model()  # full-graph forward (should be CPU if model on CPU)
                 self._cached_embeddings = (user_emb, item_emb)
                 self._cache_valid = True
         return self._cached_embeddings
 
-    # Training loop
     def train(self):
         num_epochs = self.config.gnn.num_epochs
         save_path = self.config.paths.trained_gnn
         k_hit = self.config.gnn.k_hit
         eval_every = self.config.gnn.eval_every
 
-        # Initialize best NDCG
         best_ndcg = 0.0
 
-        # Compile model for PyTorch 2.0+ if available
-        # if hasattr(torch, 'compile'):
-        #     self.model = torch.compile(self.model)
+        # Precompute item embeddings cache (audio + artist + album) on CPU and detach
+        # (model.item_h_cache expected by forward())
+        with torch.no_grad():
+            self.model.item_h_cache = (
+                self.model.item_audio_emb +
+                self.model.artist_emb(self.model.artist_ids) +
+                self.model.album_emb(self.model.album_ids)
+            ).detach()
 
         for epoch in range(1, num_epochs + 1):
             self.model.train()
-            self._cache_valid = False  # Invalidate cache when training
-
-            total_loss = 0
+            self._cache_valid = False  # invalidate evaluation cache
+            total_loss = 0.0
             num_batches = 0
-            progress = tqdm(self.loader, desc=f"Epoch {epoch}", leave=False)
 
+            progress = tqdm(self.loader, desc=f"Epoch {epoch}", leave=False)
             for batch in progress:
-                u_idx, i_pos_idx, i_neg_idx = [
-                    torch.tensor(x)
-                    for x in batch
-                ]
+                # batch is (u_idx, i_pos_idx, i_neg_idx) as tensors
+                u_idx, i_pos_idx, i_neg_idx = [x.to(self.device) for x in batch]
+
+                # Concatenate positive and negative items for forward pass (global ids)
+                all_item_idx = torch.cat([i_pos_idx, i_neg_idx], dim=0)
+
                 self.optimizer.zero_grad()
 
-                # Forward pass on the full train graph
-                user_emb_full, item_emb_full, align_loss = self.model(self.train_graph)
+                # Forward: expects user_idx (global) and item_idx (global: pos+neg)
+                u_emb_batch, i_emb_all, align_loss = self.model(
+                    user_idx=u_idx,
+                    item_idx=all_item_idx,
+                    return_projections=(self.lambda_align > 0)
+                )
 
-                u_emb = user_emb_full[u_idx].to(self.device)
-                i_pos_emb = item_emb_full[i_pos_idx].to(self.device)
-                i_neg_emb = item_emb_full[i_neg_idx].to(self.device)
+                # Split item embeddings into pos and neg (in the same order)
+                i_pos_emb = i_emb_all[: len(i_pos_idx)]
+                i_neg_emb = i_emb_all[len(i_pos_idx):]
 
-                loss_bpr = self._bpr_loss(u_emb, i_pos_emb, i_neg_emb)
+                # Compute BPR loss
+                loss_bpr = self._bpr_loss(u_emb_batch, i_pos_emb, i_neg_emb)
+
+                # Total loss with optional alignment
                 loss = loss_bpr + self.lambda_align * align_loss
 
+                # Backprop
                 loss.backward()
-
-                # Gradient clipping for stability
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-
                 self.optimizer.step()
 
                 total_loss += loss.item()
                 num_batches += 1
-
-                if num_batches % 100 == 0:  # Update progress less frequently
+                if num_batches % 100 == 0:
                     progress.set_postfix({"loss": total_loss / num_batches})
 
-            avg_loss = total_loss / num_batches
+            avg_loss = total_loss / max(1, num_batches)
             print(f"Epoch {epoch} - Train Loss: {avg_loss:.4f}")
 
             # Evaluate less frequently to speed up training
@@ -199,7 +205,7 @@ class GNNTrainer:
                     f"| Dislike-FPR@{k_hit}={metrics['dislike_fpr@k']:.4f}"
                 )
 
-                # Update learning rate
+                # Update learning rate scheduler
                 self.scheduler.step(metrics['ndcg@k'])
 
                 # Save best model
