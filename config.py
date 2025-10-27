@@ -56,16 +56,19 @@ class PathsConfig:
     train_set_file: str = field(init=False)
     val_set_file: str = field(init=False)
     test_set_file: str = field(init=False)
+    cold_start_songs_file: str = field(init=False)
     train_edges_file: str = field(init=False)
     train_graph_file: str = field(init=False)
 
     raw_data_files: List[str] = field(init=False)
+    split_ratios_file: str = field(init=False)
 
     trained_gnn: str = field(init=False)
     user_embeddings_gnn: str = field(init=False)
     song_embeddings_gnn: str = field(init=False)
 
     ann_index: str = field(init=False)
+    ann_song_ids: str = field(init=False)
 
     def __post_init__(self):
         os.makedirs(self.processed_dir, exist_ok=True)
@@ -92,6 +95,7 @@ class PathsConfig:
         self.train_set_file = f"{self.processed_dir}/train.parquet"
         self.val_set_file = f"{self.processed_dir}/val.parquet"
         self.test_set_file = f"{self.processed_dir}/test.parquet"
+        self.cold_start_songs_file = f"{self.processed_dir}/cold_start_songs.parquet"
         self.train_edges_file = f"{self.processed_dir}/train_edges.parquet"
         self.train_graph_file = f"{self.processed_dir}/graph.pt"
 
@@ -103,11 +107,18 @@ class PathsConfig:
             self.raw_undislikes_file
         ]
 
+        self.split_paths = {
+            "train": self.train_set_file,
+            "val": self.val_set_file,
+            "test": self.test_set_file,
+        }
+
         self.trained_gnn = f"{self.gnn_models_dir}/best_model.pth"
         self.user_embeddings_gnn = f"{self.gnn_models_dir}/user_embeddings.pt"
         self.song_embeddings_gnn = f"{self.gnn_models_dir}/song_embeddings.pt"
 
-        self.ann_index = f"{self.ann_models_dir}/index"
+        self.ann_index = f"{self.ann_models_dir}/index.faiss"
+        self.ann_song_ids = f"{self.ann_models_dir}/song_ids.npy"
 
 
 # -------------------
@@ -134,11 +145,6 @@ class PreprocessingConfig:
         "train": 0.8,
         "val": 0.1,
         "test": 0.1
-    })
-    split_paths: Dict[str, str] = field(default_factory=lambda: {
-        "train": f"processed_data/train.parquet",
-        "val": f"processed_data/val.parquet",
-        "test": f"processed_data/test.parquet"
     })
 
 
@@ -184,6 +190,8 @@ class GNNConfig:
 @dataclass
 class ANNConfig:
     top_k: int = 10
+    nprobe: int = 32
+    nlist: int = 4096
 
 
 # -------------------

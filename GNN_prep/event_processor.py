@@ -4,7 +4,8 @@ class EventProcessor:
     """
     Class for the pre-process of the multi-event file
     """
-    def __init__(self, con: duckdb.DuckDBPyConnection, embeddings_path: str, multi_event_path: str):
+    def __init__(self, con: duckdb.DuckDBPyConnection, embeddings_path: str,
+                 multi_event_path: str):
         """
         Args:
             con: duckdb connection
@@ -100,13 +101,36 @@ class EventProcessor:
             self.con.execute(f"COPY (SELECT * FROM events_with_idx) TO '{output_path}' (FORMAT PARQUET)")
             print(f'Filtered multi event file saved to {output_path}')
 
-    def split_data(self, split_ratios: dict, split_paths: dict):
+
+    def _save_cold_start_songs(self, cold_start_songs_path: str):
+        query = f"""
+        CREATE TEMPORARY TABLE cold_start_songs AS
+        SELECT 
+                d,item_id AS item_id, d.item_idx AS item_idx, 
+                emb.normalized_embed AS item_normalized_embed
+        FROM split_data d, 
+        LEFT JOIN read_parquet('{self.embeddings_path}') emb
+            ON d.item_id = emb.item_id
+        WHERE d.item_id NOT IN (
+            SELECT DISTINCT item_id FROM split_data WHERE split = 'test'
+        )
+        AND d.split IN ('train', 'val')
         """
-        splits the filtered multi-event file into train, validation and test sets.
+
+        self.con.execute(query)
+        self.con.execute(f"COPY (SELECT * FROM cold_start_songs) TO '{cold_start_songs_path}' (FORMAT PARQUET)")
+        print(f'Cold start songs file saved to {cold_start_songs_path}')
+
+
+    def split_data(self, split_ratios: dict, split_paths: dict, cold_start_songs_path: str):
+        """
+        splits the filtered multi-event file into train, validation and test sets and
+        saves the embeddings of the cold-start songs.
 
         Args:
             split_ratios: dictionary with keys 'train', 'valid', 'test' containing the ratio for each set
             split_paths: dictionary with keys 'train', 'valid', 'test' containing the save paths
+            cold_start_songs_path: path to save the cold start songs
         """
         query = f"""
             CREATE TEMPORARY TABLE split_data AS
@@ -139,3 +163,6 @@ class EventProcessor:
 
         self.con.execute(f"COPY (SELECT * FROM split_data WHERE split='test') TO '{split_paths['test']}' (FORMAT PARQUET)")
         print(f"Test data saved to {split_paths['test']}")
+
+        self._save_cold_start_songs(cold_start_songs_path)
+

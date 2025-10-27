@@ -27,7 +27,8 @@ def main():
     processor = EventProcessor(con, config.paths.audio_embeddings_file, config.paths.raw_multi_event_file)
     processor.filter_events(config.preprocessing.interaction_threshold)
     # processor.filter_events(config.preprocessing.interaction_threshold, config.paths.interactions_file)
-    processor.split_data(config.preprocessing.split_ratios, config.preprocessing.split_paths)
+    processor.split_data(config.preprocessing.split_ratios, config.paths.split_paths,
+                         config.paths.cold_start_songs_file)
 
     print('\n---------- EDGE ASSEMBLER ----------')
     aggregator = EdgeAssembler(con, config.paths.train_set_file, config.preprocessing.weights,
