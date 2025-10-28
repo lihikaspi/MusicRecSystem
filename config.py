@@ -135,7 +135,7 @@ class PreprocessingConfig:
         "unlike": 4,
         "undislike": 5
     })
-    interaction_threshold: int = 650
+    interaction_threshold: int = 800
     weights: Dict[str, float] = field(default_factory=lambda: {
         "listens": 0.7,
         "likes": 1.0,
