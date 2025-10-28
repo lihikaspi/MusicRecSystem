@@ -60,6 +60,6 @@ def main():
 
 
 if __name__ == "__main__":
-    check_prev_files()
-    create_test_graph()
-    # main()
+    # check_prev_files()
+    # create_test_graph()
+    main()
