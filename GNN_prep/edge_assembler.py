@@ -213,5 +213,5 @@ class EdgeAssembler:
         self._add_song_metadata()
 
         if output_path is not None:
-            self.con.execute(f"COPY (SELECT * FROM agg_edges_event_type) TO '{output_path}' (FORMAT PARQUET)")
+            self.con.execute(f"COPY (SELECT * FROM agg_edges_artist_album) TO '{output_path}' (FORMAT PARQUET)")
             print(f"Edge data saved to {output_path}")

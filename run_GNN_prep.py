@@ -20,6 +20,21 @@ def check_prev_files():
         print("All needed files are present! starting Preprocessing ... ")
 
 
+def create_test_graph():
+    con = duckdb.connect()
+    print('\n---------- EDGE ASSEMBLER ----------')
+    aggregator = EdgeAssembler(con, config.paths.test_set_file, config.preprocessing.weights,
+                               config.paths.audio_embeddings_file, config.paths.album_mapping_file,
+                               config.paths.artist_mapping_file, config.preprocessing.edge_type_mapping)
+    aggregator.assemble_edges()
+    # aggregator.assemble_edges(config.paths.train_edges_file)
+
+    print('\n---------- GRAPH BUILDER ----------')
+    graph_builder = GraphBuilder(con)
+    graph_builder.save_graph(config.paths.test_graph_file)
+
+    con.close()
+
 def main():
     con = duckdb.connect()
 
@@ -46,4 +61,5 @@ def main():
 
 if __name__ == "__main__":
     check_prev_files()
-    main()
+    create_test_graph()
+    # main()

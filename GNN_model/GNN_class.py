@@ -5,6 +5,7 @@ from torch_geometric.nn import LGConv
 from torch_geometric.data import HeteroData
 from config import Config
 
+
 class EdgeWeightMLP(nn.Module):
     def __init__(self, config: Config):
         super().__init__()
@@ -34,9 +35,10 @@ class LightGCN(nn.Module):
         # Embeddings
         self.user_emb = nn.Embedding(self.num_users, self.embed_dim)
 
-        self.register_buffer('item_audio_emb', data['item'].x)
-        self.register_buffer('artist_ids', data['item'].artist_id)
-        self.register_buffer('album_ids', data['item'].album_id)
+        # Keep on CPU, move to GPU only when needed
+        self.register_buffer('item_audio_emb', data['item'].x.cpu())
+        self.register_buffer('artist_ids', data['item'].artist_id.cpu())
+        self.register_buffer('album_ids', data['item'].album_id.cpu())
 
         num_artists = self.artist_ids.max().item() + 1
         num_albums = self.album_ids.max().item() + 1
@@ -50,26 +52,18 @@ class LightGCN(nn.Module):
         nn.init.xavier_uniform_(self.album_emb.weight)
         nn.init.xavier_uniform_(self.audio_proj.weight)
 
-        # Edge features
-        self.register_buffer('edge_index', data['user', 'interacts', 'item'].edge_index)
-        self.register_buffer('edge_attr', data['user', 'interacts', 'item'].edge_attr)
-        self.register_buffer('edge_weight_init', data['user', 'interacts', 'item'].edge_weight_init)
+        # Edge features - keep on CPU
+        self.register_buffer('edge_index', data['user', 'interacts', 'item'].edge_index.cpu())
+        self.register_buffer('edge_attr', data['user', 'interacts', 'item'].edge_attr.cpu())
+        self.register_buffer('edge_weight_init', data['user', 'interacts', 'item'].edge_weight_init.cpu())
         edge_features = torch.cat([self.edge_attr, self.edge_weight_init.unsqueeze(1)], dim=1)
-        self.register_buffer('edge_features', edge_features)
+        self.register_buffer('edge_features', edge_features.cpu())
 
-        # Precompute item embeddings (CPU)
-        self.register_buffer('item_h_cache', self.item_audio_emb +
-                             self.artist_emb(self.artist_ids) +
-                             self.album_emb(self.album_ids))
-
-        # Precompute edge weights (CPU)
+        # Edge MLP - will compute weights on-the-fly instead of precomputing
         self.edge_mlp = EdgeWeightMLP(config)
-        with torch.no_grad():
-            self.register_buffer('edge_weight_cache', self.edge_mlp(self.edge_features))
 
         # LGConv layers
         self.convs = nn.ModuleList([LGConv() for _ in range(self.num_layers)])
-
 
     def _alignment_loss(self, u_emb, i_emb_pos):
         """
@@ -91,26 +85,40 @@ class LightGCN(nn.Module):
 
         # Ensure edge_index and edge_weight are on the same device
         edge_index = self.edge_index.to(device)
-        edge_weight = self.edge_weight_init.to(device) if self.edge_weight_init is not None else None
 
-        # Combine all input node indices into one tensor (user + all items in batch)
-        batch_nodes = torch.cat([user_idx, item_idx], dim=0).unique() if user_idx is not None and item_idx is not None \
-            else user_idx if user_idx is not None \
-            else item_idx if item_idx is not None \
-            else torch.arange(self.num_users + self.num_items, device=device)
+        # Compute edge weights using MLP on-the-fly to save memory
+        edge_features = self.edge_features.to(device)
+        edge_weight = self.edge_mlp(edge_features)
 
-        # Mask edges connecting batch nodes
-        mask_src = torch.isin(edge_index[0], batch_nodes)
-        mask_dst = torch.isin(edge_index[1], batch_nodes)
-        mask = mask_src & mask_dst
+        # For training: use mini-batch subgraph sampling to reduce memory
+        if user_idx is not None and item_idx is not None:
+            # Get unique nodes in batch
+            batch_users = user_idx.unique()
+            batch_items = item_idx.unique()
 
-        edge_index_sub = edge_index[:, mask]
-        edge_weight_sub = edge_weight[mask] if edge_weight is not None else None
+            # Filter edges: only keep edges where BOTH endpoints are in batch
+            # More memory-efficient than torch.isin for large graphs
+            user_mask = (edge_index[0].unsqueeze(1) == batch_users.unsqueeze(0)).any(dim=1)
+            item_mask = (edge_index[1].unsqueeze(1) == (batch_items + self.num_users).unsqueeze(0)).any(dim=1)
+            mask = user_mask & item_mask
+
+            edge_index_sub = edge_index[:, mask]
+            edge_weight_sub = edge_weight[mask] if edge_weight is not None else None
+        else:
+            # Full graph (for evaluation) - process all edges
+            edge_index_sub = edge_index
+            edge_weight_sub = edge_weight
 
         # Compute embeddings
         user_embed = self.user_emb.weight
-        item_embed = self.item_audio_emb + self.artist_emb(self.artist_ids) + self.album_emb(self.album_ids)
+
+        # Compute item embeddings on-the-fly instead of using cache
+        item_audio = self.item_audio_emb.to(device)
+        artist_ids = self.artist_ids.to(device)
+        album_ids = self.album_ids.to(device)
+        item_embed = item_audio + self.artist_emb(artist_ids) + self.album_emb(album_ids)
         item_embed = self.audio_proj(item_embed)
+
         x = torch.cat([user_embed, item_embed], dim=0)
 
         # LGConv layers
@@ -120,15 +128,13 @@ class LightGCN(nn.Module):
 
         # Slice embeddings for batch users and items
         u_emb = x[user_idx] if user_idx is not None else None
-        i_emb = x[item_idx] if item_idx is not None else None
+        i_emb = x[self.num_users + item_idx] if item_idx is not None else None
 
         # Alignment loss only on positive items
         if return_projections and u_emb is not None and pos_item_idx is not None:
-            pos_emb = x[pos_item_idx]
+            pos_emb = x[self.num_users + pos_item_idx]
             align_loss = (1 - F.cosine_similarity(u_emb, pos_emb, dim=-1)).mean()
         else:
             align_loss = torch.tensor(0.0, device=device)
 
         return u_emb, i_emb, align_loss
-
-

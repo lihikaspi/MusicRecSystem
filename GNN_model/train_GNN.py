@@ -16,6 +16,7 @@ class BPRDataset(Dataset):
     Performs negative sampling on the fly.
     Expects `interactions` as an (N,2) ndarray of (user_idx, item_idx).
     """
+
     def __init__(self, interactions, num_items, neg_samples_per_pos):
         self.user_item = interactions
         self.num_items = int(num_items)
@@ -60,7 +61,8 @@ class BPRDataset(Dataset):
                 if i_neg not in self.user2items[u]:
                     break
 
-        return torch.tensor(u, dtype=torch.long), torch.tensor(i_pos, dtype=torch.long), torch.tensor(i_neg, dtype=torch.long)
+        return torch.tensor(u, dtype=torch.long), torch.tensor(i_pos, dtype=torch.long), torch.tensor(i_neg,
+                                                                                                      dtype=torch.long)
 
 
 class GNNTrainer:
@@ -77,6 +79,9 @@ class GNNTrainer:
         self.lambda_align = config.gnn.lambda_align
         self.batch_size = config.gnn.batch_size
 
+        # Gradient accumulation to simulate larger batches
+        self.accumulation_steps = 4  # Effective batch_size = 4 * 4 = 16
+
         # optimizer & scheduler
         self.optimizer = torch.optim.AdamW(
             self.model.parameters(),
@@ -92,7 +97,8 @@ class GNNTrainer:
         self.evaluator = GNNEvaluator(self.model, self.train_graph, self.device, config.gnn.eval_event_map)
 
         # build BPR dataset from the heterograph edges
-        edge_index = train_graph['user', 'interacts', 'item'].edge_index  # tensor[2, E] - global ids: users 0..U-1, items 0..I-1
+        edge_index = train_graph[
+            'user', 'interacts', 'item'].edge_index  # tensor[2, E] - global ids: users 0..U-1, items 0..I-1
         user_idx_np, item_idx_np = edge_index.cpu().numpy()
         train_edges = np.stack([user_idx_np.astype(np.int64), item_idx_np.astype(np.int64)], axis=1)
 
@@ -101,13 +107,15 @@ class GNNTrainer:
         self.dataset = BPRDataset(train_edges, self.num_items, config.gnn.neg_samples_per_pos)
 
         # DataLoader for BPR dataset (standard PyTorch DataLoader)
+        # Reduce num_workers to save memory
         pin_memory = True if ('cuda' in str(self.device)) else False
         self.loader = DataLoader(
             self.dataset,
             batch_size=self.batch_size,
             shuffle=True,
-            num_workers=getattr(config.gnn, "num_workers", 0),
-            pin_memory=pin_memory
+            num_workers=min(2, getattr(config.gnn, "num_workers", 0)),  # Reduce to save memory
+            pin_memory=pin_memory,
+            persistent_workers=False  # Don't keep workers alive between epochs
         )
 
         # caches
@@ -125,8 +133,22 @@ class GNNTrainer:
         if not self._cache_valid or self._cached_embeddings is None:
             self.model.eval()
             with torch.no_grad():
-                user_emb, item_emb, _ = self.model()  # full-graph forward (should be CPU if model on CPU)
-                self._cached_embeddings = (user_emb, item_emb)
+                # For evaluation: compute full embeddings but keep on CPU to save GPU memory
+                user_emb = self.model.user_emb.weight.cpu()
+
+                # Compute item embeddings on CPU
+                device_backup = next(self.model.parameters()).device
+                item_audio = self.model.item_audio_emb
+                artist_ids = self.model.artist_ids
+                album_ids = self.model.album_ids
+
+                # Move embeddings to CPU for computation
+                item_embed = (item_audio +
+                              self.model.artist_emb(artist_ids).cpu() +
+                              self.model.album_emb(album_ids).cpu())
+                item_embed = self.model.audio_proj(item_embed.to(device_backup)).cpu()
+
+                self._cached_embeddings = (user_emb, item_embed)
                 self._cache_valid = True
         return self._cached_embeddings
 
@@ -138,14 +160,7 @@ class GNNTrainer:
 
         best_ndcg = 0.0
 
-        # Precompute item embeddings cache (audio + artist + album) on CPU and detach
-        # (model.item_h_cache expected by forward())
-        with torch.no_grad():
-            self.model.item_h_cache = (
-                self.model.item_audio_emb +
-                self.model.artist_emb(self.model.artist_ids) +
-                self.model.album_emb(self.model.album_ids)
-            ).detach()
+        # No precomputation needed - embeddings computed on-the-fly in forward pass
 
         for epoch in range(1, num_epochs + 1):
             self.model.train()
@@ -154,19 +169,18 @@ class GNNTrainer:
             num_batches = 0
 
             progress = tqdm(self.loader, desc=f"Epoch {epoch}", leave=False)
-            for batch in progress:
+            for batch_idx, batch in enumerate(progress):
                 # batch is (u_idx, i_pos_idx, i_neg_idx) as tensors
                 u_idx, i_pos_idx, i_neg_idx = [x.to(self.device) for x in batch]
 
                 # Concatenate positive and negative items for forward pass (global ids)
                 all_item_idx = torch.cat([i_pos_idx, i_neg_idx], dim=0)
 
-                self.optimizer.zero_grad()
-
                 # Forward: expects user_idx (global) and item_idx (global: pos+neg)
                 u_emb_batch, i_emb_all, align_loss = self.model(
                     user_idx=u_idx,
                     item_idx=all_item_idx,
+                    pos_item_idx=i_pos_idx,
                     return_projections=(self.lambda_align > 0)
                 )
 
@@ -180,18 +194,31 @@ class GNNTrainer:
                 # Total loss with optional alignment
                 loss = loss_bpr + self.lambda_align * align_loss
 
+                # Scale loss by accumulation steps
+                loss = loss / self.accumulation_steps
+
                 # Backprop
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-                self.optimizer.step()
 
-                total_loss += loss.item()
+                # Only step optimizer every accumulation_steps
+                if (batch_idx + 1) % self.accumulation_steps == 0:
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                    self.optimizer.step()
+                    self.optimizer.zero_grad()
+
+                total_loss += loss.item() * self.accumulation_steps  # Unscale for logging
                 num_batches += 1
-                if num_batches % 100 == 0:
+
+                # Clear cache periodically to prevent memory buildup
+                if num_batches % 50 == 0:
+                    torch.cuda.empty_cache()
                     progress.set_postfix({"loss": total_loss / num_batches})
 
             avg_loss = total_loss / max(1, num_batches)
             print(f"Epoch {epoch} - Train Loss: {avg_loss:.4f}")
+
+            # Clear GPU memory before evaluation
+            torch.cuda.empty_cache()
 
             # Evaluate less frequently to speed up training
             if epoch % eval_every == 0 or epoch == num_epochs:
@@ -213,3 +240,6 @@ class GNNTrainer:
                     torch.save(self.model.state_dict(), save_path)
                     best_ndcg = metrics['ndcg@k']
                     print(f"Saved best model (NDCG@{k_hit}: {best_ndcg:.4f})")
+
+                # Clear cache after evaluation
+                torch.cuda.empty_cache()

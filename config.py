@@ -59,6 +59,7 @@ class PathsConfig:
     cold_start_songs_file: str = field(init=False)
     train_edges_file: str = field(init=False)
     train_graph_file: str = field(init=False)
+    test_graph_file: str = field(init=False)
 
     raw_data_files: List[str] = field(init=False)
     split_paths: Dict[str, str] = field(init=False)
@@ -97,7 +98,8 @@ class PathsConfig:
         self.test_set_file = f"{self.processed_dir}/test.parquet"
         self.cold_start_songs_file = f"{self.processed_dir}/cold_start_songs.parquet"
         self.train_edges_file = f"{self.processed_dir}/train_edges.parquet"
-        self.train_graph_file = f"{self.processed_dir}/graph.pt"
+        self.train_graph_file = f"{self.processed_dir}/train_graph.pt"
+        self.test_graph_file = f"{self.processed_dir}/test_graph.pt"
 
         self.raw_data_files = [
             self.raw_listens_file,
@@ -156,22 +158,22 @@ class GNNConfig:
     device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     seed: int = 42
 
-    embed_dim: int = 128
-    num_layers: int = 3
+    embed_dim: int = 128  # Match audio embeddings
+    num_layers: int = 1  # Reduced to 1 layer - critical for memory
     init_std: float = 0.1
-    lambda_align: float = 0.1
+    lambda_align: float = 0.0  # Disable alignment loss temporarily to save memory
     freeze_audio: bool = True
 
-    edge_mlp_hidden_dim: int = 32
+    edge_mlp_hidden_dim: int = 8  # Reduced from 32
     edge_mlp_input_dim: int = 4
 
     lr: float = 0.001
     num_epochs: int = 50
-    batch_size: int = 64
+    batch_size: int = 4  # Reduced from 16 - critical!
     weight_decay: float = 1e-4
-    num_workers: int = 4
+    num_workers: int = 0  # Set to 0 to save memory
     eval_every: int = 5
-    neg_samples_per_pos = 5
+    neg_samples_per_pos = 1  # Reduced from 5 - only 1 negative per positive
 
     k_hit: int = 10
 
