@@ -33,6 +33,7 @@ class PipelineConfig:
 class PathsConfig:
     dataset_size: str = "50m"
     data_dir: str = field(init=False)
+    csv_dir: str = field(init=False)
     processed_dir: str = "processed_data"
     gnn_models_dir: str = "models/GNN"
     ann_models_dir: str = "models/ANN"
@@ -78,9 +79,11 @@ class PathsConfig:
         os.makedirs(self.ann_models_dir, exist_ok=True)
         os.makedirs(self.eval_dir, exist_ok=True)
 
-        self.data_dir = f"project_data/YambdaData{self.dataset_size}/"
-        self.data_cols_file = f"{self.data_dir}/yambda_columns.csv"
-        self.data_stats_file = f"{self.data_dir}/YambdaStats_{self.dataset_size}.csv"
+        self.data_dir = f"project_data/YambdaData{self.dataset_size}"
+        self.csv_dir = f"project_data/YambdaDataCSV"
+
+        self.data_cols_file = f"{self.csv_dir}/yambda_columns.csv"
+        self.data_stats_file = f"{self.csv_dir}/YambdaStats_{self.dataset_size}.csv"
 
         self.raw_listens_file = f"{self.data_dir}/listens.parquet"
         self.raw_likes_file = f"{self.data_dir}/likes.parquet"

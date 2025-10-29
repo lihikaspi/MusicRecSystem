@@ -19,7 +19,7 @@ Created By: Lihi Kaspi, Harel Oved & Niv Maman
    - [Stage 1: Downloading the Dataset](#stage-1-downloading-the-dataset)
    - [Stage 2: Preparing the Data for the GNN](#stage-2-preparing-the-data-for-the-gnn)
    - [Stage 3: Training and Evaluating the GNN](#stage-3-training-and-evaluating-the-gnn)
-   - [Stage 4: ANN Search and Retrieval](#stage-4-ann-search-and-retrieval)
+   - [Stage 4: Retrieving Recommendations using ANN Index](#stage-4-retrieving-recommendations-using-ann-index)
 
 ---
 
@@ -202,8 +202,8 @@ print(f"PyG version: {torch_geometric.__version__}")
     ├── embeddings.parquet      # pre-computed audio embeddings
     ├── album_mapping.parquet   # song-album mapping
     ├── artist_mapping.parquet  # song-artist mapping
-    ├── yambda_columns.csv      # column names of each data file and first row
-    └── YambdaStats_50m.csv     # basic statistics for each interaction file
+    ├── yambda_columns.csv      # column names of each data file and first row (optional)
+    └── YambdaStats_50m.csv     # basic statistics for each interaction file (optional)
 ```
 
 ---
@@ -216,7 +216,7 @@ All configuration parameters are defined using Python dataclasses in `config.py`
 - **Pipeline:** Order of the stages for the main pipeline runner
 - **File paths:** Input/output directories
 - **Preprocessing parameters:** Interaction threshold, event-type weights, split ratios
-- **GNN hyperparameters:** PyTorch device, embeddings dimension, number of layers, training parameters, etc.
+- **GNN hyperparameters:** PyTorch device, embeddings dimension, number of layers, training hyperparameters, etc.
 - **ANN parameters:** Top-K recommendations to retrieve
 
 The pipeline contains a single global `config` object used throughout all the scripts.
@@ -392,7 +392,7 @@ Construct the model (`LightGCN` defined in `GNN_class.py`) and train it on the p
   - Batches of users and negative samples (if used).  
   - Validation using the `GNNEvaluator` class after each epoch.  
   - Checkpoint saved when validation NDCG@K improves.
-- The best model checkpoint is saved to `TRAINED_GNN` during training based on validation NDCG@K.
+- The best model checkpoint is saved to `config.paths.trained_gnn` during training based on validation NDCG@K.
 
 #### 2. Evaluation
 
@@ -426,7 +426,7 @@ config.paths.trained_gnn
 # K_HIT = 50
 ```
 
-### Stage 4: ANN Search and Retrieval
+### Stage 4: Retrieving Recommendations using ANN Index
 
 Run the ANN search and retrieval pipeline:
 
