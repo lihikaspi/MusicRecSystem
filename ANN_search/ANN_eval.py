@@ -1,5 +1,9 @@
-# TODO: write the code
-# Hit@K (was the test song in top-K?)
-# Recall@K (fraction of test songs retrieved)
-# NDCG@K (ranking quality)
-# MRR (mean reciprocal rank).
+import matplotlib as plt
+import numpy as np
+import seaborn as sns
+from config import Config
+
+# TODO: save all the graphs to config.paths.eval_dir
+
+def eval_recs(rec_song_ids, config: Config):
+    pass

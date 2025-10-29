@@ -1,36 +1,36 @@
 import duckdb
+from config import Config
 
 class EventProcessor:
     """
     Class for the pre-process of the multi-event file
     """
-    def __init__(self, con: duckdb.DuckDBPyConnection, embeddings_path: str,
-                 multi_event_path: str):
+    def __init__(self, con: duckdb.DuckDBPyConnection, config: Config):
         """
         Args:
             con: duckdb connection
-            embeddings_path: path to embeddings file
-            multi_event_path: path to multi-event file
+            config: global Config object
         """
         self.con = con
-        self.embeddings_path = embeddings_path
-        self.multi_event_path = multi_event_path
+        self.embeddings_path = config.paths.audio_embeddings_file
+        self.multi_event_path = config.paths.raw_multi_event_file
+        self.threshold = config.preprocessing.interaction_threshold
+        self.split_ratios = config.preprocessing.split_ratios
+        self.split_paths = config.paths.split_paths
+        self.cold_start_songs_path = config.paths.cold_start_songs_file
 
 
-    def _compute_active_users(self, threshold: int):
+    def _compute_active_users(self):
         """
         finds all the users that have more interactions than the given threshold.
         creates a temporary table 'active_users' in the DuckDB memory.
-
-        Args:
-            threshold: threshold for the amount of interactions
         """
         query = f"""
             CREATE TEMPORARY TABLE active_users AS
             SELECT uid
             FROM read_parquet('{self.multi_event_path}')
             GROUP BY uid
-            HAVING COUNT(*) >= {threshold}
+            HAVING COUNT(*) >= {self.threshold}
         """
         self.con.execute(query)
         print("Found all active users")
@@ -55,9 +55,9 @@ class EventProcessor:
         print("Finished filtering the multi-event interactions")
 
 
-    def _encode_ids(self):
+    def _encode_user_ids(self):
         """
-        encodes the given user IDs and songs IDs into GNN-ready IDs (continuous integers).
+        encodes the given user IDs into GNN-ready IDs (continuous integers).
         creates a temporary table 'events_with_idx' in the DuckDB memory.
         """
         query = """
@@ -66,77 +66,44 @@ class EventProcessor:
             user_index AS (
                 SELECT uid, ROW_NUMBER() OVER (ORDER BY uid) - 1 AS user_idx
                 FROM (SELECT DISTINCT uid FROM filtered_events)
-            ),
-            song_index AS (
-                SELECT item_id, ROW_NUMBER() OVER (ORDER BY item_id) - 1 AS item_idx
-                FROM (SELECT DISTINCT item_id FROM filtered_events)
             )
-           SELECT e.*, u.user_idx, s.item_idx
-           FROM filtered_events e
-                JOIN user_index u USING (uid)
-                JOIN song_index s USING (item_id)
-        """
+            SELECT e.*, u.user_idx
+            FROM filtered_events e
+            JOIN user_index u USING (uid)
+            """
         self.con.execute(query)
-        print("Created user and song indices")
+        print("Created user indices")
 
 
-    def filter_events(self, interactions_threshold: int, output_path:str = None ):
+    def filter_events(self, threshold: int = None, output_path:str = None ):
         """
         runs the multi-event filtering pipeline:
             1. find active users with more interactions than the given threshold
             2. filter out songs and users
-            3. encode user and song IDs
+            3. encode user IDs
 
-        Add an output path to save the filtered file.
+        Add a threshold value to override the config-defined threshold
+        and/or an output path to save the filtered file as a parquet.
 
         Args:
-            interactions_threshold: threshold for interactions
+            threshold: threshold for interactions, default: none
             output_path: path to save the filtered file, default: none
         """
-        self._compute_active_users(interactions_threshold)
+        if threshold is not None:
+            self.threshold = threshold
+
+        self._compute_active_users()
         self._filter_multi_event_file()
-        self._encode_ids()
+        self._encode_user_ids()
 
         if output_path is not None:
             self.con.execute(f"COPY (SELECT * FROM events_with_idx) TO '{output_path}' (FORMAT PARQUET)")
             print(f'Filtered multi event file saved to {output_path}')
 
-    def _save_cold_start_songs(self, cold_start_songs_path: str):
-        self.con.execute("""
-            CREATE TEMPORARY TABLE test_items AS
-            SELECT DISTINCT item_id 
-            FROM split_data 
-            WHERE split = 'test'
-        """)
 
-        self.con.execute(f"""
-            CREATE TEMPORARY TABLE cold_start_songs AS
-            SELECT d.item_id, d.item_idx, emb.normalized_embed
-            FROM split_data d
-            LEFT JOIN read_parquet('{self.embeddings_path}') emb
-                ON d.item_id = emb.item_id
-            LEFT JOIN test_items t
-                ON d.item_id = t.item_id
-            WHERE d.split IN ('train', 'val') 
-              AND t.item_id IS NULL
-        """)
-
-        self.con.execute(f"""
-            COPY (SELECT * FROM cold_start_songs) 
-            TO '{cold_start_songs_path}' (FORMAT PARQUET)
-        """)
-        print(f'Cold start songs file saved to {cold_start_songs_path}')
-
-
-    def split_data(self, split_ratios: dict, split_paths: dict, cold_start_songs_path: str):
+    def _split_data(self):
         """
-        splits the filtered multi-event file into train, validation and test sets and
-        saves the embeddings of the cold-start songs.
-
-        Args:
-            split_ratios: dictionary with keys 'train', 'valid', 'test' containing the ratio for each set
-            split_paths: dictionary with keys 'train', 'valid', 'test' containing the save paths
-            cold_start_songs_path: path to save the cold start songs
+        splits the filtered multi-event file into train, validation and test sets
         """
         query = f"""
             CREATE TEMPORARY TABLE split_data AS
@@ -148,27 +115,68 @@ class EventProcessor:
             )
             SELECT o.*,
                    CASE 
-                       WHEN o.rn <= {split_ratios['train']} * o.total_events THEN 'train'
-                       WHEN o.rn <= ({split_ratios['train']} + {split_ratios['val']}) * o.total_events THEN 'val'
+                       WHEN o.rn <= {self.split_ratios['train']} * o.total_events THEN 'train'
+                       WHEN o.rn <= ({self.split_ratios['train']} + {self.split_ratios['val']}) * o.total_events THEN 'val'
                        ELSE 'test'
                    END AS split
             FROM ordered o
-            ORDER BY o.user_idx, o.timestamp
+            ORDER BY o.user_idx, o.rn
         """
+
         self.con.execute(query)
         print(f"\nData was split into:\n"
-              f"{split_ratios['train'] * 100}% train set\n"
-              f"{split_ratios['val'] * 100}% validation set\n"
-              f"{split_ratios['test'] * 100}% test set\n")
+              f"{self.split_ratios['train'] * 100}% train set\n"
+              f"{self.split_ratios['val'] * 100}% validation set\n"
+              f"{self.split_ratios['test'] * 100}% test set\n")
 
-        self.con.execute(f"COPY (SELECT * FROM split_data WHERE split='train') TO '{split_paths['train']}' (FORMAT PARQUET)")
-        print(f"Train data saved to {split_paths['train']}")
+        self.con.execute(f"COPY (SELECT * FROM split_data WHERE split='train') TO '{self.split_paths['train']}' (FORMAT PARQUET)")
+        print(f"Train data saved to {self.split_paths['train']}")
 
-        self.con.execute(f"COPY (SELECT * FROM split_data WHERE split='val') TO '{split_paths['val']}' (FORMAT PARQUET)")
-        print(f"Validation data saved to {split_paths['val']}")
+        self.con.execute(f"COPY (SELECT * FROM split_data WHERE split='val') TO '{self.split_paths['val']}' (FORMAT PARQUET)")
+        print(f"Validation data saved to {self.split_paths['val']}")
 
-        self.con.execute(f"COPY (SELECT * FROM split_data WHERE split='test') TO '{split_paths['test']}' (FORMAT PARQUET)")
-        print(f"Test data saved to {split_paths['test']}")
+        self.con.execute(f"COPY (SELECT * FROM split_data WHERE split='test') TO '{self.split_paths['test']}' (FORMAT PARQUET)")
+        print(f"Test data saved to {self.split_paths['test']}")
 
-        self._save_cold_start_songs(cold_start_songs_path)
+
+    def _save_cold_start_songs(self):
+        """
+        save the audio embeddings and song IDs of songs not in the train set for evaluation purposes.
+        """
+        self.con.execute("""
+            CREATE TEMPORARY TABLE test_items AS
+            SELECT DISTINCT item_id 
+            FROM split_data 
+            WHERE split = 'test'
+        """)
+
+        self.con.execute(f"""
+            CREATE TEMPORARY TABLE cold_start_songs AS
+            SELECT d.item_id emb.normalized_embed
+            FROM split_data d
+            LEFT JOIN read_parquet('{self.embeddings_path}') emb
+                ON d.item_id = emb.item_id
+            LEFT JOIN test_items t
+                ON d.item_id = t.item_id
+            WHERE d.split IN ('train', 'val') 
+              AND t.item_id IS NULL
+        """)
+
+        self.con.execute(f"""COPY (SELECT * FROM cold_start_songs) TO '{self.cold_start_songs_path}' (FORMAT PARQUET)""")
+        print(f'Cold start songs file saved to {self.cold_start_songs_path}')
+
+
+    def split_data(self, split_ratios: dict = None):
+        """
+        splits the filtered multi-event file into train, validation and test sets and
+        saves the embeddings of the cold-start songs.
+
+        Args:
+            split_ratios: dictionary of split ratios, default: none
+        """
+        if split_ratios is not None:
+            self.split_ratios = split_ratios
+
+        self._split_data()
+        self._save_cold_start_songs()
 

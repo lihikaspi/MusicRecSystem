@@ -36,6 +36,7 @@ class PathsConfig:
     processed_dir: str = "processed_data"
     gnn_models_dir: str = "models/GNN"
     ann_models_dir: str = "models/ANN"
+    eval_dir: str = "eval_results"
 
     data_cols_file: str = field(init=False)
     data_stats_file: str = field(init=False)
@@ -75,6 +76,7 @@ class PathsConfig:
         os.makedirs(self.processed_dir, exist_ok=True)
         os.makedirs(self.gnn_models_dir, exist_ok=True)
         os.makedirs(self.ann_models_dir, exist_ok=True)
+        os.makedirs(self.eval_dir, exist_ok=True)
 
         self.data_dir = f"project_data/YambdaData{self.dataset_size}/"
         self.data_cols_file = f"{self.data_dir}/yambda_columns.csv"

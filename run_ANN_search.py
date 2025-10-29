@@ -1,8 +1,13 @@
 import os
 from config import config
 from ANN_search.ANN_index import retrieve_recs
+from ANN_search.ANN_eval import eval_recs
 
 def check_prev_files():
+    """
+    check for the files created in the previous stage.
+    if at least one file is missing raises FileNotFoundError
+    """
     needed = [config.paths.song_embeddings_gnn, config.paths.audio_embeddings_gnn,
               config.paths.song_embeddings_gnn]
     fail = False
@@ -17,7 +22,8 @@ def check_prev_files():
 
 
 def main():
-  recommended_song_ids, recommended_scores = retrieve_recs(config)
+  rec_song_ids = retrieve_recs(config)
+  eval_recs(rec_song_ids, config)
 
 
 if __name__ == "__main__":

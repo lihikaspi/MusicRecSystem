@@ -7,6 +7,10 @@ from config import config
 
 
 def check_prev_files():
+    """
+    check for the files created in the previous stage.
+    if at least one file is missing raises FileNotFoundError
+    """
     needed = [config.paths.audio_embeddings_file, config.paths.train_graph_file, config.paths.test_set_file]
     fail = False
     for file in needed:
@@ -20,6 +24,7 @@ def check_prev_files():
 
 
 def test_evaluation(model: LightGCN, train_graph, k_hit: int):
+    print("evaluating best model...")
     # Evaluate using the test parquet file
     test_evaluator = GNNEvaluator(model, train_graph, config.gnn.device, config.gnn.eval_event_map)
     test_metrics = test_evaluator.evaluate(config.paths.test_set_file, k=k_hit)
@@ -62,23 +67,18 @@ def save_final_embeddings(model: LightGCN, train_graph, user_embed_path, song_em
 
 
 def main():
-    print("Loading pre-built train graph...")
     train_graph = torch.load(config.paths.train_graph_file)
 
-    print("Initializing LightGCN model...")
+    print("Initializing the GNN model")
     model = LightGCN(train_graph, config)
 
     print("Starting training...")
     trainer = GNNTrainer(model, train_graph, config)
     trainer.train()
 
-    print("Loading best model for evaluation...")
     model.load_state_dict(torch.load(config.paths.trained_gnn, map_location=config.gnn.device))
-
-    print("Evaluating on test set...")
     test_evaluation(model, train_graph, config.gnn.k_hit)
 
-    print("Saving user and item embeddings...")
     save_final_embeddings(model, train_graph, config.paths.user_embeddings_gnn, config.paths.song_embeddings_gnn)
 
 

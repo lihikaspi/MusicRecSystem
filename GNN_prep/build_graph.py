@@ -6,18 +6,18 @@ import numpy as np
 class GraphBuilder:
     """
     Class to construct the graph used for the GNN model.
-    Assumes preprocessing has already filtered and encoded all IDs.
-    Uses item_train_idx for contiguous item IDs in training, but keeps original item_idx for mapping back.
     """
     def __init__(self, con: duckdb.DuckDBPyConnection):
         self.con = con
 
     def _build_graph(self):
-        # Load edges, replace item_idx with item_train_idx where available
+        """
+        Construct the train graph used for the GNN model.
+        """
         edges_df = self.con.execute("""
             SELECT user_idx,
                    COALESCE(item_train_idx, -1) AS item_train_idx,
-                   item_idx AS original_item_idx,
+                   item_id AS original_item_idx,
                    edge_count, edge_avg_played_ratio, edge_type, edge_weight
             FROM agg_edges_artist_album
             JOIN agg_edges USING(item_idx)
@@ -64,13 +64,17 @@ class GraphBuilder:
         data['user'].user_id = torch.arange(num_users, dtype=torch.long)
         data['user'].num_nodes = num_users
 
-        print(f"[INFO] Graph created: num_users={num_users}, num_items={len(item_embeddings_df)}")
-        print(f"[DEBUG] Edge index min/max: {edge_index.min().item()}/{edge_index.max().item()}")
-        print(f"[DEBUG] Total nodes (users + items): {num_users + len(item_embeddings_df)}")
+        print("Finished constructing graph")
 
         return data
 
-    def save_graph(self, output_path: str):
+    def build_graph(self, output_path: str):
+        """
+        Construct the train graph and save it
+
+        Args:
+            output_path: path to save the graph
+        """
         data = self._build_graph()
         torch.save(data, output_path)
-        print(f"[INFO] Graph saved to {output_path}")
+        print(f"Graph saved to {output_path}")
