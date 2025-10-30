@@ -14,7 +14,8 @@ class EventProcessor:
         self.con = con
         self.embeddings_path = config.paths.audio_embeddings_file
         self.multi_event_path = config.paths.raw_multi_event_file
-        self.threshold = config.preprocessing.interaction_threshold
+        self.low_threshold = config.preprocessing.low_interaction_threshold
+        self.high_threshold = config.preprocessing.high_interaction_threshold
         self.split_ratios = config.preprocessing.split_ratios
         self.split_paths = config.paths.split_paths
         self.cold_start_songs_path = config.paths.cold_start_songs_file
@@ -30,7 +31,8 @@ class EventProcessor:
             SELECT uid
             FROM read_parquet('{self.multi_event_path}')
             GROUP BY uid
-            HAVING COUNT(*) >= {self.threshold}
+            HAVING COUNT(*) >= {self.low_threshold}
+            AND COUNT(*) <= {self.high_threshold}
         """
         self.con.execute(query)
         print("Found all active users")
@@ -75,7 +77,7 @@ class EventProcessor:
         print("Created user indices")
 
 
-    def filter_events(self, threshold: int = None, output_path:str = None ):
+    def filter_events(self, low_threshold: int = None, high_threshold: int = None, output_path:str = None ):
         """
         runs the multi-event filtering pipeline:
             1. find active users with more interactions than the given threshold
@@ -86,11 +88,15 @@ class EventProcessor:
         and/or an output path to save the filtered file as a parquet.
 
         Args:
-            threshold: threshold for interactions, default: none
+            low_threshold: lower threshold for interactions, default: none
+            high_threshold: higher threshold for interactions, default: none
             output_path: path to save the filtered file, default: none
         """
-        if threshold is not None:
-            self.threshold = threshold
+        if low_threshold is not None:
+            self.low_threshold = low_threshold
+
+        if high_threshold is not None:
+            self.high_threshold = high_threshold
 
         self._compute_active_users()
         self._filter_multi_event_file()
@@ -152,7 +158,7 @@ class EventProcessor:
 
         self.con.execute(f"""
             CREATE TEMPORARY TABLE cold_start_songs AS
-            SELECT d.item_id emb.normalized_embed
+            SELECT d.item_id, emb.normalized_embed
             FROM split_data d
             LEFT JOIN read_parquet('{self.embeddings_path}') emb
                 ON d.item_id = emb.item_id

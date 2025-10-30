@@ -20,7 +20,7 @@ class GraphBuilder:
                    item_id AS original_item_idx,
                    edge_count, edge_avg_played_ratio, edge_type, edge_weight
             FROM agg_edges_artist_album
-            JOIN agg_edges USING(item_idx)
+            JOIN agg_edges USING(item_id)
         """).fetch_df()
 
         # Filter out edges pointing to items not in train (optional: keep them with -1 if needed)
@@ -41,7 +41,7 @@ class GraphBuilder:
 
         # Load item node features
         item_embeddings_df = self.con.execute("""
-            SELECT item_train_idx, item_normalized_embed, artist_idx, album_idx, item_idx AS original_item_idx
+            SELECT item_train_idx, item_normalized_embed, artist_idx, album_idx, item_id AS original_item_idx
             FROM agg_edges_artist_album
             WHERE item_train_idx >= 0
             ORDER BY item_train_idx
@@ -56,7 +56,7 @@ class GraphBuilder:
         data['item'].x = torch.tensor(np.vstack(item_embeddings_df['item_normalized_embed'].values), dtype=torch.float)
         data['item'].artist_id = torch.tensor(item_embeddings_df['artist_idx'].values, dtype=torch.long)
         data['item'].album_id = torch.tensor(item_embeddings_df['album_idx'].values, dtype=torch.long)
-        data['item'].item_idx = torch.tensor(item_embeddings_df['original_item_idx'].values, dtype=torch.long)  # keep original for mapping back
+        data['item'].item_id = torch.tensor(item_embeddings_df['original_item_idx'].astype(np.int64).values, dtype=torch.long)  # keep original for mapping back
         data['item'].num_nodes = len(item_embeddings_df)
 
         # Users

@@ -22,6 +22,7 @@ class EdgeWeightMLP(nn.Module):
 
 class LightGCN(nn.Module):
     def __init__(self, data: HeteroData, config: Config):
+        print('>>> starting GNN init')
         super().__init__()
         self.config = config
         self.num_layers = config.gnn.num_layers
@@ -64,6 +65,7 @@ class LightGCN(nn.Module):
 
         # LGConv layers
         self.convs = nn.ModuleList([LGConv() for _ in range(self.num_layers)])
+        print(">>> finished GNN init")
 
     def _alignment_loss(self, u_emb, i_emb_pos):
         """
@@ -80,7 +82,7 @@ class LightGCN(nn.Module):
         # Loss: maximize similarity → minimize (1 - cos_sim)
         return (1 - cos_sim).mean()
 
-    def forward(self, user_idx=None, item_idx=None, pos_item_idx=None, return_projections=False):
+    def forward(self, user_idx=None, item_id=None, pos_item_id=None, return_projections=False):
         device = next(self.parameters()).device
 
         # Ensure edge_index and edge_weight are on the same device
@@ -91,10 +93,10 @@ class LightGCN(nn.Module):
         edge_weight = self.edge_mlp(edge_features)
 
         # For training: use mini-batch subgraph sampling to reduce memory
-        if user_idx is not None and item_idx is not None:
+        if user_idx is not None and item_id is not None:
             # Get unique nodes in batch
             batch_users = user_idx.unique()
-            batch_items = item_idx.unique()
+            batch_items = item_id.unique()
 
             # Filter edges: only keep edges where BOTH endpoints are in batch
             # More memory-efficient than torch.isin for large graphs
@@ -128,11 +130,11 @@ class LightGCN(nn.Module):
 
         # Slice embeddings for batch users and items
         u_emb = x[user_idx] if user_idx is not None else None
-        i_emb = x[self.num_users + item_idx] if item_idx is not None else None
+        i_emb = x[self.num_users + item_id] if item_id is not None else None
 
         # Alignment loss only on positive items
-        if return_projections and u_emb is not None and pos_item_idx is not None:
-            pos_emb = x[self.num_users + pos_item_idx]
+        if return_projections and u_emb is not None and pos_item_id is not None:
+            pos_emb = x[self.num_users + pos_item_id]
             align_loss = (1 - F.cosine_similarity(u_emb, pos_emb, dim=-1)).mean()
         else:
             align_loss = torch.tensor(0.0, device=device)

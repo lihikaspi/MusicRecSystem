@@ -140,13 +140,14 @@ class PreprocessingConfig:
         "unlike": 4,
         "undislike": 5
     })
-    interaction_threshold: int = 500
+    low_interaction_threshold: int = 2000
+    high_interaction_threshold: int = 3000
     weights: Dict[str, float] = field(default_factory=lambda: {
-        "listens": 0.7,
-        "likes": 1.0,
-        "dislikes": -1,
-        "unlikes": -0.5,
-        "undislikes": 0.5
+        "listen": 0.7,
+        "like": 1.0,
+        "dislike": -1.0,
+        "unlike": -0.5,
+        "undislike": 0.5
     })
     split_ratios: Dict[str, float] = field(default_factory=lambda: {
         "train": 0.8,

@@ -1,5 +1,6 @@
 *.parquet
 *.pt
+*.pth
 .idea/
 __pycache__/
 *.pyc
@@ -10,4 +11,6 @@ __pycache__/
 .venv
 *niv.py
 .json
+*.faiss
+*.npy
 

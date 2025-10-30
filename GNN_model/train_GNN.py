@@ -14,7 +14,7 @@ class BPRDataset(Dataset):
     """
     Dataset for BPR training.
     Performs negative sampling on the fly.
-    Expects `interactions` as an (N,2) ndarray of (user_idx, item_idx).
+    Expects `interactions` as an (N,2) ndarray of (user_idx, item_id).
     """
 
     def __init__(self, interactions, num_items, neg_samples_per_pos):
@@ -99,8 +99,8 @@ class GNNTrainer:
         # build BPR dataset from the heterograph edges
         edge_index = train_graph[
             'user', 'interacts', 'item'].edge_index  # tensor[2, E] - global ids: users 0..U-1, items 0..I-1
-        user_idx_np, item_idx_np = edge_index.cpu().numpy()
-        train_edges = np.stack([user_idx_np.astype(np.int64), item_idx_np.astype(np.int64)], axis=1)
+        user_idx_np, item_id_np = edge_index.cpu().numpy()
+        train_edges = np.stack([user_idx_np.astype(np.int64), item_id_np.astype(np.int64)], axis=1)
 
         self.num_items = int(train_graph['item'].num_nodes)
 
@@ -174,13 +174,13 @@ class GNNTrainer:
                 u_idx, i_pos_idx, i_neg_idx = [x.to(self.device) for x in batch]
 
                 # Concatenate positive and negative items for forward pass (global ids)
-                all_item_idx = torch.cat([i_pos_idx, i_neg_idx], dim=0)
+                all_item_id = torch.cat([i_pos_idx, i_neg_idx], dim=0)
 
-                # Forward: expects user_idx (global) and item_idx (global: pos+neg)
+                # Forward: expects user_idx (global) and item_id (global: pos+neg)
                 u_emb_batch, i_emb_all, align_loss = self.model(
                     user_idx=u_idx,
-                    item_idx=all_item_idx,
-                    pos_item_idx=i_pos_idx,
+                    item_id=all_item_id,
+                    pos_item_id=i_pos_idx,
                     return_projections=(self.lambda_align > 0)
                 )
 
@@ -209,7 +209,6 @@ class GNNTrainer:
                 total_loss += loss.item() * self.accumulation_steps  # Unscale for logging
                 num_batches += 1
 
-                # Clear cache periodically to prevent memory buildup
                 if num_batches % 50 == 0:
                     torch.cuda.empty_cache()
                     progress.set_postfix({"loss": total_loss / num_batches})
@@ -219,11 +218,8 @@ class GNNTrainer:
 
             # Clear GPU memory before evaluation
             torch.cuda.empty_cache()
-
-            # Evaluate less frequently to speed up training
             if epoch % eval_every == 0 or epoch == num_epochs:
                 metrics = self.evaluator.evaluate(self.val_parquet, k=k_hit)
-
                 print(
                     f"NDCG@{k_hit}={metrics['ndcg@k']:.4f} "
                     f"| Hit@{k_hit} (like)={metrics['hit_like@k']:.4f} "
@@ -232,14 +228,11 @@ class GNNTrainer:
                     f"| Dislike-FPR@{k_hit}={metrics['dislike_fpr@k']:.4f}"
                 )
 
-                # Update learning rate scheduler
                 self.scheduler.step(metrics['ndcg@k'])
 
-                # Save best model
                 if metrics['ndcg@k'] > best_ndcg:
                     torch.save(self.model.state_dict(), save_path)
                     best_ndcg = metrics['ndcg@k']
                     print(f"Saved best model (NDCG@{k_hit}: {best_ndcg:.4f})")
 
-                # Clear cache after evaluation
                 torch.cuda.empty_cache()
