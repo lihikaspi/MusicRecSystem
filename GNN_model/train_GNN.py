@@ -2,46 +2,20 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
 import torch.nn.functional as F
-import pyarrow.parquet as pq
-from torch_geometric.data import HeteroData
 from tqdm import tqdm
 from GNN_model.GNN_class import LightGCN
-from GNN_model.eval_GNN import GNNEvaluator
-from config import Config
+from config import Config, PreprocessingConfig
 
-
+# ------------------------------
+# BPR Dataset
+# ------------------------------
 class BPRDataset(Dataset):
-    """
-    Dataset for BPR training.
-    Performs negative sampling on the fly.
-    Expects `interactions` as an (N,2) ndarray of (user_idx, item_id).
-    """
-
-    def __init__(self, interactions, num_items, neg_samples_per_pos):
+    def __init__(self, interactions, num_items):
         self.user_item = interactions
         self.num_items = int(num_items)
-        self.neg_samples_per_pos = int(neg_samples_per_pos)
-
         self.user2items = {}
         for u, i in interactions:
             self.user2items.setdefault(int(u), set()).add(int(i))
-
-        # Precompute some negative samples to reduce online computation
-        self.precomputed_negatives = {}
-        self._precompute_negatives()
-
-    def _precompute_negatives(self):
-        """ Precompute negative samples for each user """
-        for user, pos_items in self.user2items.items():
-            neg_pool = []
-            attempts = 0
-            # keep a reasonably large pool; safe-guard with attempts limit
-            while len(neg_pool) < self.neg_samples_per_pos * 100 and attempts < 1000:
-                candidate = np.random.randint(0, self.num_items)
-                if candidate not in pos_items:
-                    neg_pool.append(candidate)
-                attempts += 1
-            self.precomputed_negatives[user] = neg_pool
 
     def __len__(self):
         return len(self.user_item)
@@ -51,76 +25,52 @@ class BPRDataset(Dataset):
         u = int(u)
         i_pos = int(i_pos)
 
-        # Use precomputed negatives when available
-        if u in self.precomputed_negatives and self.precomputed_negatives[u]:
-            i_neg = self.precomputed_negatives[u].pop()
-        else:
-            # Fallback to online sampling
-            while True:
-                i_neg = int(np.random.randint(0, self.num_items))
-                if i_neg not in self.user2items[u]:
-                    break
+        # fallback negative sampling (full graph) will override in trainer
+        while True:
+            i_neg = np.random.randint(0, self.num_items)
+            if i_neg not in self.user2items[u]:
+                break
 
-        return torch.tensor(u, dtype=torch.long), torch.tensor(i_pos, dtype=torch.long), torch.tensor(i_neg,
-                                                                                                      dtype=torch.long)
+        return torch.tensor(u, dtype=torch.long), \
+               torch.tensor(i_pos, dtype=torch.long), \
+               torch.tensor(i_neg, dtype=torch.long)
 
 
+def collate_bpr(batch):
+    u_idx = torch.stack([b[0] for b in batch])
+    i_pos_idx = torch.stack([b[1] for b in batch])
+    i_neg_idx = torch.stack([b[2] for b in batch])
+    return u_idx, i_pos_idx, i_neg_idx
+
+
+# ------------------------------
+# Trainer
+# ------------------------------
 class GNNTrainer:
-    def __init__(self, model: LightGCN, train_graph: HeteroData, config: Config):
-        """
-        model: LightGCN instance (already constructed)
-        train_graph: HeteroData with 'user' and 'item' nodes and ('user','interacts','item') edges
-        config: Config object
-        """
-        self.model = model
-        self.train_graph = train_graph  # keep on CPU
-        self.config = config
+    def __init__(self, model: LightGCN, train_graph, config: Config):
         self.device = config.gnn.device
-        self.lambda_align = config.gnn.lambda_align
+        self.model = model.to(self.device)
+        self.train_graph = train_graph
+        self.config = config
         self.batch_size = config.gnn.batch_size
+        self.lr = config.gnn.lr
 
-        # Gradient accumulation to simulate larger batches
-        self.accumulation_steps = 4  # Effective batch_size = 4 * 4 = 16
-
-        # optimizer & scheduler
-        self.optimizer = torch.optim.AdamW(
-            self.model.parameters(),
-            lr=config.gnn.lr,
-            weight_decay=getattr(config.gnn, "weight_decay", 0.0)
-        )
-        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            self.optimizer, mode='max', factor=0.5, patience=3, verbose=True
-        )
-
-        # validation / eval settings
-        self.val_parquet = config.paths.val_set_file
-        self.evaluator = GNNEvaluator(self.model, self.train_graph, self.device, config.gnn.eval_event_map)
-
-        # build BPR dataset from the heterograph edges
-        edge_index = train_graph[
-            'user', 'interacts', 'item'].edge_index  # tensor[2, E] - global ids: users 0..U-1, items 0..I-1
+        # Build BPR dataset
+        edge_index = train_graph['user', 'interacts', 'item'].edge_index
         user_idx_np, item_id_np = edge_index.cpu().numpy()
         train_edges = np.stack([user_idx_np.astype(np.int64), item_id_np.astype(np.int64)], axis=1)
-
         self.num_items = int(train_graph['item'].num_nodes)
+        self.dataset = BPRDataset(train_edges, self.num_items)
 
-        self.dataset = BPRDataset(train_edges, self.num_items, config.gnn.neg_samples_per_pos)
-
-        # DataLoader for BPR dataset (standard PyTorch DataLoader)
-        # Reduce num_workers to save memory
-        pin_memory = True if ('cuda' in str(self.device)) else False
+        pin_memory = 'cuda' in str(self.device)
         self.loader = DataLoader(
             self.dataset,
             batch_size=self.batch_size,
             shuffle=True,
-            num_workers=min(2, getattr(config.gnn, "num_workers", 0)),  # Reduce to save memory
+            num_workers=config.gnn.num_workers,
             pin_memory=pin_memory,
-            persistent_workers=False  # Don't keep workers alive between epochs
+            collate_fn=collate_bpr
         )
-
-        # caches
-        self._cached_embeddings = None
-        self._cache_valid = False
 
     @staticmethod
     def _bpr_loss(u_emb, pos_emb, neg_emb):
@@ -128,111 +78,106 @@ class GNNTrainer:
         neg_score = (u_emb * neg_emb).sum(dim=1)
         return F.softplus(-(pos_score - neg_score)).mean()
 
-    def _get_embeddings(self):
-        """ Get embeddings with caching for efficiency during evaluation """
-        if not self._cache_valid or self._cached_embeddings is None:
-            self.model.eval()
-            with torch.no_grad():
-                # For evaluation: compute full embeddings but keep on CPU to save GPU memory
-                user_emb = self.model.user_emb.weight.cpu()
-
-                # Compute item embeddings on CPU
-                device_backup = next(self.model.parameters()).device
-                item_audio = self.model.item_audio_emb
-                artist_ids = self.model.artist_ids
-                album_ids = self.model.album_ids
-
-                # Move embeddings to CPU for computation
-                item_embed = (item_audio +
-                              self.model.artist_emb(artist_ids).cpu() +
-                              self.model.album_emb(album_ids).cpu())
-                item_embed = self.model.audio_proj(item_embed.to(device_backup)).cpu()
-
-                self._cached_embeddings = (user_emb, item_embed)
-                self._cache_valid = True
-        return self._cached_embeddings
-
     def train(self):
         num_epochs = self.config.gnn.num_epochs
-        save_path = self.config.paths.trained_gnn
-        k_hit = self.config.gnn.k_hit
-        eval_every = self.config.gnn.eval_every
-
-        best_ndcg = 0.0
-
-        # No precomputation needed - embeddings computed on-the-fly in forward pass
+        edge_index_full = self.train_graph['user', 'interacts', 'item'].edge_index.to(self.device)
+        edge_types_full = self.train_graph['user', 'interacts', 'item'].edge_attr[:, 0].to(self.device)
 
         for epoch in range(1, num_epochs + 1):
             self.model.train()
-            self._cache_valid = False  # invalidate evaluation cache
             total_loss = 0.0
-            num_batches = 0
-
             progress = tqdm(self.loader, desc=f"Epoch {epoch}", leave=False)
-            for batch_idx, batch in enumerate(progress):
-                # batch is (u_idx, i_pos_idx, i_neg_idx) as tensors
-                u_idx, i_pos_idx, i_neg_idx = [x.to(self.device) for x in batch]
 
-                # Concatenate positive and negative items for forward pass (global ids)
-                all_item_id = torch.cat([i_pos_idx, i_neg_idx], dim=0)
+            for batch in progress:
+                # -------------------
+                # Unpack batch
+                # -------------------
+                u_idx, i_pos_idx, _ = [x.to(self.device) for x in batch]
+                batch_users = u_idx.cpu().numpy()
 
-                # Forward: expects user_idx (global) and item_id (global: pos+neg)
-                u_emb_batch, i_emb_all, align_loss = self.model(
-                    user_idx=u_idx,
-                    item_id=all_item_id,
-                    pos_item_id=i_pos_idx,
-                    return_projections=(self.lambda_align > 0)
+                # -------------------
+                # Build subgraph nodes
+                # -------------------
+                batch_items_set = set()
+                for u in batch_users:
+                    batch_items_set.update(self.dataset.user2items[u])
+                batch_items = torch.tensor(sorted(batch_items_set), device=self.device)
+
+                # Combine users + items (items offset by num_users)
+                batch_nodes = torch.cat([u_idx, batch_items + self.model.num_users])
+                node_to_idx = {int(n.item() if isinstance(n, torch.Tensor) else n): i
+                               for i, n in enumerate(batch_nodes)}
+
+                # -------------------
+                # Filter edges for subgraph
+                # -------------------
+                mask_user = torch.isin(edge_index_full[0], torch.tensor(batch_users, device=self.device))
+                mask_item = torch.isin(edge_index_full[1], batch_items + self.model.num_users)
+                mask_sub = mask_user & mask_item
+
+                edge_index_sub = edge_index_full[:, mask_sub]
+                edge_types_sub = edge_types_full[mask_sub]
+
+                # -------------------
+                # Forward pass on subgraph
+                # -------------------
+                x_sub = self.model.forward_subgraph(batch_nodes, edge_index_sub)
+
+                # -------------------
+                # Map batch users/items to local subgraph indices
+                # -------------------
+                u_list = u_idx.cpu().numpy().tolist()
+                u_indices = torch.tensor([node_to_idx[i] for i in u_list],
+                                         dtype=torch.long,
+                                         device=self.device)
+
+                # Convert to list of Python ints first
+                i_pos_list = (i_pos_idx.cpu().numpy() + self.model.num_users).tolist()
+
+                # Map to local subgraph indices
+                i_pos_indices = torch.tensor([node_to_idx[i] for i in i_pos_list],
+                                             dtype=torch.long,
+                                             device=self.device)
+
+                u_emb_sub = x_sub[u_indices]
+                i_pos_sub = x_sub[i_pos_indices]
+
+                # -------------------
+                # Negative sampling from items in subgraph (dislikes/unlikes)
+                # -------------------
+                all_items_local = batch_items.cpu().numpy()
+                neg_candidates = []
+                for i, u in enumerate(batch_users):
+                    pos_set = self.dataset.user2items[u]
+                    # Only pick items not in positive set
+                    sub_neg = [item for item in all_items_local if item not in pos_set]
+                    if len(sub_neg) == 0:
+                        # fallback: random from all items
+                        sub_neg = np.random.choice(self.num_items, size=1).tolist()
+                    neg_candidates.append(np.random.choice(sub_neg))
+
+                i_neg_indices = torch.tensor(
+                    [node_to_idx[n + self.model.num_users] for n in neg_candidates],
+                    dtype=torch.long,
+                    device=self.device
                 )
+                i_neg_sub = x_sub[i_neg_indices]
 
-                # Split item embeddings into pos and neg (in the same order)
-                i_pos_emb = i_emb_all[: len(i_pos_idx)]
-                i_neg_emb = i_emb_all[len(i_pos_idx):]
+                # -------------------
+                # Compute BPR loss & manual SGD
+                # -------------------
+                loss_bpr = self._bpr_loss(u_emb_sub, i_pos_sub, i_neg_sub)
+                loss_bpr.backward()
 
-                # Compute BPR loss
-                loss_bpr = self._bpr_loss(u_emb_batch, i_pos_emb, i_neg_emb)
+                with torch.no_grad():
+                    for param in self.model.parameters():
+                        if param.grad is not None:
+                            param -= self.lr * param.grad
+                    self.model.zero_grad(set_to_none=True)
 
-                # Total loss with optional alignment
-                loss = loss_bpr + self.lambda_align * align_loss
+                total_loss += loss_bpr.item()
 
-                # Scale loss by accumulation steps
-                loss = loss / self.accumulation_steps
-
-                # Backprop
-                loss.backward()
-
-                # Only step optimizer every accumulation_steps
-                if (batch_idx + 1) % self.accumulation_steps == 0:
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-                    self.optimizer.step()
-                    self.optimizer.zero_grad()
-
-                total_loss += loss.item() * self.accumulation_steps  # Unscale for logging
-                num_batches += 1
-
-                if num_batches % 50 == 0:
-                    torch.cuda.empty_cache()
-                    progress.set_postfix({"loss": total_loss / num_batches})
-
-            avg_loss = total_loss / max(1, num_batches)
+            avg_loss = total_loss / len(self.loader)
             print(f"Epoch {epoch} - Train Loss: {avg_loss:.4f}")
 
-            # Clear GPU memory before evaluation
-            torch.cuda.empty_cache()
-            if epoch % eval_every == 0 or epoch == num_epochs:
-                metrics = self.evaluator.evaluate(self.val_parquet, k=k_hit)
-                print(
-                    f"NDCG@{k_hit}={metrics['ndcg@k']:.4f} "
-                    f"| Hit@{k_hit} (like)={metrics['hit_like@k']:.4f} "
-                    f"| Hit@{k_hit} (like+listen)={metrics['hit_like_listen@k']:.4f} "
-                    f"| AUC={metrics['auc']:.4f} "
-                    f"| Dislike-FPR@{k_hit}={metrics['dislike_fpr@k']:.4f}"
-                )
 
-                self.scheduler.step(metrics['ndcg@k'])
-
-                if metrics['ndcg@k'] > best_ndcg:
-                    torch.save(self.model.state_dict(), save_path)
-                    best_ndcg = metrics['ndcg@k']
-                    print(f"Saved best model (NDCG@{k_hit}: {best_ndcg:.4f})")
-
-                torch.cuda.empty_cache()

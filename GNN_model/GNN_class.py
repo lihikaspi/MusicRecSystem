@@ -20,6 +20,15 @@ class EdgeWeightMLP(nn.Module):
         return self.mlp(edge_features).squeeze()
 
 
+class AudioAdapter(nn.Module):
+    def __init__(self, audio_dim, embed_dim):
+        super().__init__()
+        self.proj = nn.Linear(audio_dim, embed_dim)
+    def forward(self, x):
+        return F.normalize(self.proj(x), dim=-1)
+
+
+
 class LightGCN(nn.Module):
     def __init__(self, data: HeteroData, config: Config):
         print('>>> starting GNN init')
@@ -47,6 +56,8 @@ class LightGCN(nn.Module):
         self.album_emb = nn.Embedding(num_albums, self.embed_dim)
 
         self.audio_proj = nn.Linear(self.item_audio_emb.size(1), self.embed_dim, bias=False)
+        audio_dim = self.item_audio_emb.size(1)
+        self.audio_adapter = AudioAdapter(audio_dim, self.embed_dim)
 
         nn.init.xavier_uniform_(self.user_emb.weight)
         nn.init.xavier_uniform_(self.artist_emb.weight)
@@ -99,7 +110,6 @@ class LightGCN(nn.Module):
             batch_items = item_id.unique()
 
             # Filter edges: only keep edges where BOTH endpoints are in batch
-            # More memory-efficient than torch.isin for large graphs
             user_mask = (edge_index[0].unsqueeze(1) == batch_users.unsqueeze(0)).any(dim=1)
             item_mask = (edge_index[1].unsqueeze(1) == (batch_items + self.num_users).unsqueeze(0)).any(dim=1)
             mask = user_mask & item_mask
@@ -114,12 +124,16 @@ class LightGCN(nn.Module):
         # Compute embeddings
         user_embed = self.user_emb.weight
 
-        # Compute item embeddings on-the-fly instead of using cache
-        item_audio = self.item_audio_emb.to(device)
+        # --- Audio embeddings via adapter ---
+        item_audio = self.item_audio_emb.to(device)  # frozen audio embeddings
         artist_ids = self.artist_ids.to(device)
         album_ids = self.album_ids.to(device)
+
+        # sum embeddings first
         item_embed = item_audio + self.artist_emb(artist_ids) + self.album_emb(album_ids)
-        item_embed = self.audio_proj(item_embed)
+
+        # apply trainable adapter instead of self.audio_proj
+        item_embed = self.audio_adapter(item_embed)
 
         x = torch.cat([user_embed, item_embed], dim=0)
 
@@ -140,3 +154,41 @@ class LightGCN(nn.Module):
             align_loss = torch.tensor(0.0, device=device)
 
         return u_emb, i_emb, align_loss
+
+    def forward_subgraph(self, batch_nodes, edge_index_sub):
+        """
+        Forward pass on a subgraph.
+        batch_nodes: tensor of global node IDs (users first, then items)
+        edge_index_sub: local edge index in subgraph (0..num_sub_nodes-1)
+        """
+        device = next(self.parameters()).device
+        batch_nodes = batch_nodes.to(device)
+        edge_index_sub = edge_index_sub.to(device)
+
+        # Map global node IDs to embeddings
+        user_mask = batch_nodes < self.num_users
+        item_mask = ~user_mask
+
+        user_nodes = batch_nodes[user_mask]
+        item_nodes = batch_nodes[item_mask] - self.num_users  # remove offset for item embeddings
+
+        # Fetch embeddings
+        user_embed = self.user_emb(user_nodes)  # [num_users_sub, embed_dim]
+        item_audio = self.item_audio_emb[item_nodes].to(device)
+        item_embed = item_audio + self.artist_emb(self.artist_ids[item_nodes].to(device)) + \
+                     self.album_emb(self.album_ids[item_nodes].to(device))
+        item_embed = self.audio_adapter(item_embed)
+
+        # Concatenate users + items to match batch_nodes order
+        x_sub = torch.zeros((len(batch_nodes), self.embed_dim), device=device)
+        x_sub[user_mask] = user_embed
+        x_sub[item_mask] = item_embed
+
+        # LGConv layers
+        for conv in self.convs:
+            x_sub = conv(x_sub, edge_index_sub)
+        x_sub = F.normalize(x_sub, p=2, dim=1)
+
+        # Return embeddings and split indices
+        return x_sub, user_nodes, item_nodes
+

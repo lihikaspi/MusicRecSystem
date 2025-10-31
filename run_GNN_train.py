@@ -67,6 +67,7 @@ def save_final_embeddings(model: LightGCN, train_graph, user_embed_path, song_em
 
 
 def main():
+    torch.cuda.empty_cache()
     train_graph = torch.load(config.paths.train_graph_file)
 
     print("Initializing the GNN model")

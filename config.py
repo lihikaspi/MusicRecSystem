@@ -140,8 +140,8 @@ class PreprocessingConfig:
         "unlike": 4,
         "undislike": 5
     })
-    low_interaction_threshold: int = 2000
-    high_interaction_threshold: int = 3000
+    low_interaction_threshold: int = 100
+    high_interaction_threshold: int = 110
     weights: Dict[str, float] = field(default_factory=lambda: {
         "listen": 0.7,
         "like": 1.0,
@@ -165,21 +165,22 @@ class GNNConfig:
     seed: int = 42
 
     embed_dim: int = 128  # Match audio embeddings
-    num_layers: int = 1  # Reduced to 1 layer - critical for memory
+    num_layers: int = 2  # Reduced to 1 layer - critical for memory
     init_std: float = 0.1
     lambda_align: float = 0.0  # Disable alignment loss temporarily to save memory
     freeze_audio: bool = True
+    audio_lr_scale: float = 0.1
 
     edge_mlp_hidden_dim: int = 8  # Reduced from 32
     edge_mlp_input_dim: int = 4
 
-    lr: float = 0.001
+    lr: float = 0.004
     num_epochs: int = 50
-    batch_size: int = 4  # Reduced from 16 - critical!
+    batch_size: int = 8  # Reduced from 16 - critical!
     weight_decay: float = 1e-4
     num_workers: int = 0  # Set to 0 to save memory
     eval_every: int = 5
-    neg_samples_per_pos = 1  # Reduced from 5 - only 1 negative per positive
+    neg_samples_per_pos = 5  # Reduced from 5 - only 1 negative per positive
 
     k_hit: int = 10
 
