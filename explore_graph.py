@@ -24,6 +24,7 @@ example_user_id = 0
 if 'user_id' in data['user']:
     print("Example user:")
     print(f"  user_id: {data['user'].user_id[example_user_id].item()}")
+    print(f"  uid: {data['user'].uid[example_user_id].item()}")
 else:
     print("User IDs not found in graph data.")
 print("-" * 60)

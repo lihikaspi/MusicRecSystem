@@ -35,7 +35,7 @@ class EdgeAssembler:
            OR (e.event_type = 'like'
                AND NOT EXISTS (
                    SELECT 1 FROM read_parquet('{self.train_path}') x
-                   WHERE x.user_idx = e.user_idx
+                   WHERE x.user_id = e.user_id
                      AND x.item_idx = e.item_idx
                      AND x.event_type = 'unlike'
                      AND x.timestamp > e.timestamp
@@ -44,7 +44,7 @@ class EdgeAssembler:
            OR (e.event_type = 'dislike'
                AND NOT EXISTS (
                    SELECT 1 FROM read_parquet('{self.train_path}') x
-                   WHERE x.user_idx = e.user_idx
+                   WHERE x.user_id = e.user_id
                      AND x.item_idx = e.item_idx
                      AND x.event_type = 'undislike'
                      AND x.timestamp > e.timestamp
@@ -73,7 +73,7 @@ class EdgeAssembler:
         query = f"""
             CREATE TEMPORARY TABLE agg_edges AS
             SELECT 
-                e.user_idx, e.item_id, e.event_type, 
+                e.uid, e.user_id, e.item_id, e.event_type, 
                 COUNT(*) AS edge_count,
                 {case_weight},
                 {case_event_type},
@@ -89,7 +89,7 @@ class EdgeAssembler:
             FROM read_parquet('{self.train_path}') e
             LEFT JOIN read_parquet('{self.embeddings_path}') emb
                 ON e.item_id = emb.item_id
-            GROUP BY e.user_idx, e.item_id, e.event_type
+            GROUP BY e.uid, e.user_id, e.item_id, e.event_type
         """
         self.con.execute(query)
         print("Finished aggregating the edges")
@@ -170,8 +170,8 @@ class EdgeAssembler:
         self.con.execute("""
             CREATE
             TEMPORARY TABLE agg_edges_artist_album AS
-            SELECT item_id,
-                item_train_idx,
+            SELECT 
+                item_id, item_train_idx,
                 ANY_VALUE(item_normalized_embed) AS item_normalized_embed,
                 MAX(artist_idx)                  AS artist_idx,
                 MAX(album_idx)                   AS album_idx,

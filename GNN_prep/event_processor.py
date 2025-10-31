@@ -66,10 +66,10 @@ class EventProcessor:
             CREATE TEMPORARY TABLE events_with_idx AS
             WITH 
             user_index AS (
-                SELECT uid, ROW_NUMBER() OVER (ORDER BY uid) - 1 AS user_idx
+                SELECT uid, ROW_NUMBER() OVER (ORDER BY uid) - 1 AS user_id
                 FROM (SELECT DISTINCT uid FROM filtered_events)
             )
-            SELECT e.*, u.user_idx
+            SELECT e.*, u.user_id
             FROM filtered_events e
             JOIN user_index u USING (uid)
             """
@@ -115,8 +115,8 @@ class EventProcessor:
             CREATE TEMPORARY TABLE split_data AS
             WITH ordered AS (
                 SELECT e.*,
-                       ROW_NUMBER() OVER (PARTITION BY e.user_idx ORDER BY e.timestamp) AS rn,
-                       COUNT(*) OVER (PARTITION BY e.user_idx) AS total_events
+                       ROW_NUMBER() OVER (PARTITION BY e.user_id ORDER BY e.timestamp) AS rn,
+                       COUNT(*) OVER (PARTITION BY e.user_id) AS total_events
                 FROM events_with_idx e
             )
             SELECT o.*,
@@ -126,7 +126,7 @@ class EventProcessor:
                        ELSE 'test'
                    END AS split
             FROM ordered o
-            ORDER BY o.user_idx, o.rn
+            ORDER BY o.user_id, o.rn
         """
 
         self.con.execute(query)

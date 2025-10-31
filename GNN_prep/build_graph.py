@@ -15,7 +15,7 @@ class GraphBuilder:
         Construct the train graph used for the GNN model.
         """
         edges_df = self.con.execute("""
-            SELECT user_idx,
+            SELECT user_id,
                    COALESCE(item_train_idx, -1) AS item_train_idx,
                    item_id AS original_item_idx,
                    edge_count, edge_avg_played_ratio, edge_type, edge_weight
@@ -27,7 +27,7 @@ class GraphBuilder:
         edges_df = edges_df[edges_df['item_train_idx'] >= 0].copy()
 
         # Edge index
-        edge_index_np = np.vstack((edges_df['user_idx'].values, edges_df['item_train_idx'].values))
+        edge_index_np = np.vstack((edges_df['user_id'].values, edges_df['item_train_idx'].values))
         edge_index = torch.from_numpy(edge_index_np).long()
 
         # Edge attributes
@@ -59,9 +59,16 @@ class GraphBuilder:
         data['item'].item_id = torch.tensor(item_embeddings_df['original_item_idx'].astype(np.int64).values, dtype=torch.long)  # keep original for mapping back
         data['item'].num_nodes = len(item_embeddings_df)
 
+        users_df = self.con.execute("""
+        SELECT DISTINCT uid, user_id
+        FROM events_with_idx
+        ORDER by uid
+        """).fetch_df()
+
         # Users
-        num_users = edges_df['user_idx'].max() + 1
-        data['user'].user_id = torch.arange(num_users, dtype=torch.long)
+        num_users = edges_df['user_id'].max() + 1
+        data['user'].user_id = torch.tensor(users_df['user_id'].values, dtype=torch.long)
+        data['user'].uid = torch.tensor(users_df['uid'].astype(np.int64).values, dtype=torch.long)
         data['user'].num_nodes = num_users
 
         print("Finished constructing graph")

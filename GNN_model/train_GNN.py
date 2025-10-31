@@ -1,10 +1,12 @@
+import os
 import torch
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
 import torch.nn.functional as F
 from tqdm import tqdm
+from torch_geometric.utils import subgraph
 from GNN_model.GNN_class import LightGCN
-from config import Config, PreprocessingConfig
+from config import Config
 
 # ------------------------------
 # BPR Dataset
@@ -22,44 +24,33 @@ class BPRDataset(Dataset):
 
     def __getitem__(self, idx):
         u, i_pos = self.user_item[idx]
-        u = int(u)
-        i_pos = int(i_pos)
-
-        # fallback negative sampling (full graph) will override in trainer
-        while True:
-            i_neg = np.random.randint(0, self.num_items)
-            if i_neg not in self.user2items[u]:
-                break
-
-        return torch.tensor(u, dtype=torch.long), \
-               torch.tensor(i_pos, dtype=torch.long), \
-               torch.tensor(i_neg, dtype=torch.long)
-
+        return torch.tensor(u, dtype=torch.long), torch.tensor(i_pos, dtype=torch.long)
 
 def collate_bpr(batch):
     u_idx = torch.stack([b[0] for b in batch])
     i_pos_idx = torch.stack([b[1] for b in batch])
-    i_neg_idx = torch.stack([b[2] for b in batch])
-    return u_idx, i_pos_idx, i_neg_idx
-
+    return u_idx, i_pos_idx
 
 # ------------------------------
-# Trainer
+# InfoNCE Trainer
 # ------------------------------
 class GNNTrainer:
     def __init__(self, model: LightGCN, train_graph, config: Config):
         self.device = config.gnn.device
         self.model = model.to(self.device)
         self.train_graph = train_graph
-        self.config = config
         self.batch_size = config.gnn.batch_size
         self.lr = config.gnn.lr
+        self.num_epochs = config.gnn.num_epochs
+        self.save_path = config.paths.trained_gnn
+        self.tau = config.gnn.tau
 
-        # Build BPR dataset
+        # Build dataset
         edge_index = train_graph['user', 'interacts', 'item'].edge_index
-        user_idx_np, item_id_np = edge_index.cpu().numpy()
-        train_edges = np.stack([user_idx_np.astype(np.int64), item_id_np.astype(np.int64)], axis=1)
+        user_idx_np, item_idx_np = edge_index.cpu().numpy()
+        train_edges = np.stack([user_idx_np.astype(np.int64), item_idx_np.astype(np.int64)], axis=1)
         self.num_items = int(train_graph['item'].num_nodes)
+        self.num_users = int(train_graph['user'].num_nodes)
         self.dataset = BPRDataset(train_edges, self.num_items)
 
         pin_memory = 'cuda' in str(self.device)
@@ -72,112 +63,95 @@ class GNNTrainer:
             collate_fn=collate_bpr
         )
 
+        # Precompute user->items tensor on GPU
+        max_items_per_user = max(len(v) for v in self.dataset.user2items.values())
+        self.user2items_tensor = torch.full(
+            (self.num_users, max_items_per_user),
+            -1, dtype=torch.long, device=self.device
+        )
+        for u, items in self.dataset.user2items.items():
+            items_list = list(items)
+            self.user2items_tensor[u, :len(items_list)] = torch.tensor(items_list, device=self.device)
+
+        # Full edge index on GPU
+        self.edge_index_full = edge_index.to(self.device)
+
     @staticmethod
-    def _bpr_loss(u_emb, pos_emb, neg_emb):
-        pos_score = (u_emb * pos_emb).sum(dim=1)
-        neg_score = (u_emb * neg_emb).sum(dim=1)
-        return F.softplus(-(pos_score - neg_score)).mean()
+    def _infonce_loss(u_emb, i_emb, temperature):
+        u_emb = F.normalize(u_emb, dim=1)
+        i_emb = F.normalize(i_emb, dim=1)
+        logits = torch.matmul(u_emb, i_emb.T) / temperature
+        labels = torch.arange(u_emb.size(0), device=u_emb.device)
+        return F.cross_entropy(logits, labels)
 
     def train(self):
-        num_epochs = self.config.gnn.num_epochs
-        edge_index_full = self.train_graph['user', 'interacts', 'item'].edge_index.to(self.device)
-        edge_types_full = self.train_graph['user', 'interacts', 'item'].edge_attr[:, 0].to(self.device)
+        os.makedirs(os.path.dirname(self.save_path), exist_ok=True)
 
-        for epoch in range(1, num_epochs + 1):
+        for epoch in range(1, self.num_epochs + 1):
             self.model.train()
             total_loss = 0.0
-            progress = tqdm(self.loader, desc=f"Epoch {epoch}", leave=False)
+            progress = tqdm(self.loader, desc=f"Epoch {epoch}", leave=True)
 
             for batch in progress:
-                # -------------------
-                # Unpack batch
-                # -------------------
-                u_idx, i_pos_idx, _ = [x.to(self.device) for x in batch]
-                batch_users = u_idx.cpu().numpy()
+                u_idx, i_pos_idx = [x.to(self.device) for x in batch]
 
                 # -------------------
-                # Build subgraph nodes
+                # Vectorized batch items
                 # -------------------
-                batch_items_set = set()
-                for u in batch_users:
-                    batch_items_set.update(self.dataset.user2items[u])
-                batch_items = torch.tensor(sorted(batch_items_set), device=self.device)
-
-                # Combine users + items (items offset by num_users)
-                batch_nodes = torch.cat([u_idx, batch_items + self.model.num_users])
-                node_to_idx = {int(n.item() if isinstance(n, torch.Tensor) else n): i
-                               for i, n in enumerate(batch_nodes)}
+                batch_items = self.user2items_tensor[u_idx].flatten()
+                batch_items = batch_items[batch_items >= 0].unique()
 
                 # -------------------
-                # Filter edges for subgraph
+                # Subgraph nodes (users + items, no offset)
                 # -------------------
-                mask_user = torch.isin(edge_index_full[0], torch.tensor(batch_users, device=self.device))
-                mask_item = torch.isin(edge_index_full[1], batch_items + self.model.num_users)
-                mask_sub = mask_user & mask_item
-
-                edge_index_sub = edge_index_full[:, mask_sub]
-                edge_types_sub = edge_types_full[mask_sub]
+                batch_nodes = torch.cat([u_idx, batch_items]).unique()
 
                 # -------------------
-                # Forward pass on subgraph
+                # Extract subgraph
+                # -------------------
+                edge_index_sub, _ = subgraph(batch_nodes, self.edge_index_full, relabel_nodes=True)
+
+                # -------------------
+                # Forward pass
                 # -------------------
                 x_sub = self.model.forward_subgraph(batch_nodes, edge_index_sub)
+                if isinstance(x_sub, tuple): x_sub = x_sub[0]
+                elif isinstance(x_sub, dict): x_sub = x_sub['x']
 
                 # -------------------
-                # Map batch users/items to local subgraph indices
+                # Map users/items to local subgraph indices
                 # -------------------
-                u_list = u_idx.cpu().numpy().tolist()
-                u_indices = torch.tensor([node_to_idx[i] for i in u_list],
-                                         dtype=torch.long,
-                                         device=self.device)
+                node_map = torch.full((int(batch_nodes.max()) + 1,), -1, device=self.device)
+                node_map[batch_nodes] = torch.arange(len(batch_nodes), device=self.device)
 
-                # Convert to list of Python ints first
-                i_pos_list = (i_pos_idx.cpu().numpy() + self.model.num_users).tolist()
-
-                # Map to local subgraph indices
-                i_pos_indices = torch.tensor([node_to_idx[i] for i in i_pos_list],
-                                             dtype=torch.long,
-                                             device=self.device)
-
-                u_emb_sub = x_sub[u_indices]
-                i_pos_sub = x_sub[i_pos_indices]
+                u_indices = node_map[u_idx]
+                i_indices = node_map[i_pos_idx]  # no offset here
+                u_emb_sub = torch.index_select(x_sub, 0, u_indices)
+                i_emb_sub = torch.index_select(x_sub, 0, i_indices)
 
                 # -------------------
-                # Negative sampling from items in subgraph (dislikes/unlikes)
+                # Compute , NCE loss
                 # -------------------
-                all_items_local = batch_items.cpu().numpy()
-                neg_candidates = []
-                for i, u in enumerate(batch_users):
-                    pos_set = self.dataset.user2items[u]
-                    # Only pick items not in positive set
-                    sub_neg = [item for item in all_items_local if item not in pos_set]
-                    if len(sub_neg) == 0:
-                        # fallback: random from all items
-                        sub_neg = np.random.choice(self.num_items, size=1).tolist()
-                    neg_candidates.append(np.random.choice(sub_neg))
-
-                i_neg_indices = torch.tensor(
-                    [node_to_idx[n + self.model.num_users] for n in neg_candidates],
-                    dtype=torch.long,
-                    device=self.device
-                )
-                i_neg_sub = x_sub[i_neg_indices]
+                loss = _infonce_loss(u_emb_sub, i_emb_sub, self.tau)
+                loss.backward()
 
                 # -------------------
-                # Compute BPR loss & manual SGD
+                # Manual in-place SGD
                 # -------------------
-                loss_bpr = self._bpr_loss(u_emb_sub, i_pos_sub, i_neg_sub)
-                loss_bpr.backward()
-
                 with torch.no_grad():
                     for param in self.model.parameters():
                         if param.grad is not None:
-                            param -= self.lr * param.grad
+                            param.add_(param.grad, alpha=-self.lr)
                     self.model.zero_grad(set_to_none=True)
 
-                total_loss += loss_bpr.item()
+                total_loss += loss.item()
+                progress.set_postfix({'loss': total_loss / (progress.n + 1)})
+
+            progress.close()
 
             avg_loss = total_loss / len(self.loader)
-            print(f"Epoch {epoch} - Train Loss: {avg_loss:.4f}")
+            # print(f"Epoch {epoch} - Train Loss: {avg_loss:.4f}")
 
-
+        # Save model
+        torch.save(self.model.state_dict(), self.save_path)
+        print(f"Training finished. Model saved to {self.save_path}")

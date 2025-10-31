@@ -140,8 +140,8 @@ class PreprocessingConfig:
         "unlike": 4,
         "undislike": 5
     })
-    low_interaction_threshold: int = 100
-    high_interaction_threshold: int = 110
+    low_interaction_threshold: int = 500
+    high_interaction_threshold: int = 600
     weights: Dict[str, float] = field(default_factory=lambda: {
         "listen": 0.7,
         "like": 1.0,
@@ -176,11 +176,12 @@ class GNNConfig:
 
     lr: float = 0.004
     num_epochs: int = 50
-    batch_size: int = 8  # Reduced from 16 - critical!
+    batch_size: int = 16  # Reduced from 16 - critical!
     weight_decay: float = 1e-4
     num_workers: int = 0  # Set to 0 to save memory
     eval_every: int = 5
     neg_samples_per_pos = 5  # Reduced from 5 - only 1 negative per positive
+    tau: float = 0.27
 
     k_hit: int = 10
 
