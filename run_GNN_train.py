@@ -78,7 +78,7 @@ def main():
     trainer.train()
 
     model.load_state_dict(torch.load(config.paths.trained_gnn, map_location=config.gnn.device))
-    test_evaluation(model, train_graph, config.gnn.k_hit)
+    # test_evaluation(model, train_graph, config.gnn.k_hit)
 
     save_final_embeddings(model, train_graph, config.paths.user_embeddings_gnn, config.paths.song_embeddings_gnn)
 

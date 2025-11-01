@@ -67,6 +67,7 @@ class PathsConfig:
     split_paths: Dict[str, str] = field(init=False)
 
     trained_gnn: str = field(init=False)
+    best_param: str = field(init=False)
     user_embeddings_gnn: str = field(init=False)
     song_embeddings_gnn: str = field(init=False)
 
@@ -121,6 +122,7 @@ class PathsConfig:
         }
 
         self.trained_gnn = f"{self.gnn_models_dir}/best_model.pth"
+        self.best_param = f"{self.gnn_models_dir}/best_param.txt"
         self.user_embeddings_gnn = f"{self.gnn_models_dir}/user_embeddings.pt"
         self.song_embeddings_gnn = f"{self.gnn_models_dir}/song_embeddings.pt"
 
@@ -140,8 +142,8 @@ class PreprocessingConfig:
         "unlike": 4,
         "undislike": 5
     })
-    low_interaction_threshold: int = 500
-    high_interaction_threshold: int = 600
+    low_interaction_threshold: int = 600
+    high_interaction_threshold: int = 1000
     weights: Dict[str, float] = field(default_factory=lambda: {
         "listen": 0.7,
         "like": 1.0,
@@ -164,24 +166,27 @@ class GNNConfig:
     device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     seed: int = 42
 
-    embed_dim: int = 128  # Match audio embeddings
-    num_layers: int = 2  # Reduced to 1 layer - critical for memory
+    embed_dim: int = 128
+    num_layers: int = 2
     init_std: float = 0.1
-    lambda_align: float = 0.0  # Disable alignment loss temporarily to save memory
+    lambda_align: float = 0.0
     freeze_audio: bool = True
     audio_lr_scale: float = 0.1
 
-    edge_mlp_hidden_dim: int = 8  # Reduced from 32
+    edge_mlp_hidden_dim: int = 8
     edge_mlp_input_dim: int = 4
 
-    lr: float = 0.004
-    num_epochs: int = 50
-    batch_size: int = 16  # Reduced from 16 - critical!
+    listen_weight: float = 0.8
+    neutral_neg_weight: float = 0.3
+
+    lr: float = 0.002
+    num_epochs: int = 20
+    batch_size: int = 64
     weight_decay: float = 1e-4
-    num_workers: int = 0  # Set to 0 to save memory
+    num_workers: int = 0
     eval_every: int = 5
-    neg_samples_per_pos = 5  # Reduced from 5 - only 1 negative per positive
-    tau: float = 0.27
+    neg_samples_per_pos = 5
+    tau: float = 0.2
 
     k_hit: int = 10
 
