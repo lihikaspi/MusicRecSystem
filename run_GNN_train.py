@@ -1,5 +1,6 @@
 import torch
 import os
+import numpy as np
 from GNN_model.train_GNN import GNNTrainer
 from GNN_model.GNN_class import LightGCN
 from GNN_model.eval_GNN import GNNEvaluator
@@ -24,8 +25,9 @@ def check_prev_files():
 
 
 def test_evaluation(model: LightGCN, train_graph, k_hit: int):
-    print("evaluating best model...")
+    print("evaluating best model on test set...")
     # Evaluate using the test parquet file
+    # TODO: fix to current evaluator
     test_evaluator = GNNEvaluator(model, train_graph, config.gnn.device, config.gnn.eval_event_map)
     test_metrics = test_evaluator.evaluate(config.paths.test_set_file, k=k_hit)
 
@@ -37,30 +39,26 @@ def test_evaluation(model: LightGCN, train_graph, k_hit: int):
     print(f"  Dislike-FPR@{k_hit}: {test_metrics['dislike_fpr@k']:.4f}")
 
 
-def save_final_embeddings(model: LightGCN, train_graph, user_embed_path, song_embed_path):
+def save_final_embeddings(model: LightGCN, user_embed_path, song_embed_path):
+    """
+    Save embeddings and original IDs as float32 NumPy arrays, ready for FAISS.
+    """
+    model.eval()
     with torch.no_grad():
-        # Get embeddings from the model
-        user_emb, item_emb, _ = model(train_graph)
+        # Full-graph forward
+        user_emb, item_emb, _ = model()
 
-        # Move to CPU
-        user_emb = user_emb.cpu()
-        item_emb = item_emb.cpu()
+        # Convert to NumPy float32
+        user_emb_np = user_emb.cpu().numpy().astype(np.float32)
+        item_emb_np = item_emb.cpu().numpy().astype(np.float32)
 
-        # Get node ID mappings (replace with your actual mappings if available)
-        user_ids = torch.arange(user_emb.size(0))  # example: 0..num_users-1
-        item_ids = torch.arange(item_emb.size(0))  # example: 0..num_items-1
+        # Original IDs
+        user_ids_np = model.user_original_ids.cpu().numpy()
+        item_ids_np = model.item_original_ids.cpu().numpy()
 
-        # Save user embeddings
-        torch.save({
-            "user_ids": user_ids,
-            "user_emb": user_emb
-        }, user_embed_path)
-
-        # Save item/song embeddings
-        torch.save({
-            "item_ids": item_ids,
-            "item_emb": item_emb
-        }, song_embed_path)
+        # Save as .npz (one file per type)
+        np.savez(user_embed_path, embeddings=user_emb_np, original_ids=user_ids_np)
+        np.savez(song_embed_path, embeddings=item_emb_np, original_ids=item_ids_np)
 
     print(f"User embeddings saved to {user_embed_path}")
     print(f"Song embeddings saved to {song_embed_path}")
@@ -78,9 +76,9 @@ def main():
     trainer.train()
 
     model.load_state_dict(torch.load(config.paths.trained_gnn, map_location=config.gnn.device))
-    # test_evaluation(model, train_graph, config.gnn.k_hit)
+    test_evaluation(model, train_graph, config.gnn.k_hit)
 
-    save_final_embeddings(model, train_graph, config.paths.user_embeddings_gnn, config.paths.song_embeddings_gnn)
+    save_final_embeddings(model, config.paths.user_embeddings_gnn, config.paths.song_embeddings_gnn)
 
 
 if __name__ == "__main__":

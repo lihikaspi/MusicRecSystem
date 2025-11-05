@@ -49,6 +49,8 @@ class LightGCN(nn.Module):
         self.register_buffer('item_audio_emb', data['item'].x.cpu())
         self.register_buffer('artist_ids', data['item'].artist_id.cpu())
         self.register_buffer('album_ids', data['item'].album_id.cpu())
+        self.register_buffer('user_original_ids', data['user'].uid.cpu())  # original uid
+        self.register_buffer('item_original_ids', data['item'].item_id.cpu())  # original item_id
 
         num_artists = self.artist_ids.max().item() + 1
         num_albums = self.album_ids.max().item() + 1
@@ -94,66 +96,50 @@ class LightGCN(nn.Module):
         return (1 - cos_sim).mean()
 
     def forward(self, user_idx=None, item_id=None, pos_item_id=None, return_projections=False):
+        """
+        Full-graph forward (used for evaluation / saving final embeddings).
+        Uses the same logic as forward_subgraph, but runs on the entire graph.
+        """
         device = next(self.parameters()).device
 
-        # Ensure edge_index and edge_weight are on the same device
+        # Move data to correct device
         edge_index = self.edge_index.to(device)
-
-        # Compute edge weights using MLP on-the-fly to save memory
         edge_features = self.edge_features.to(device)
         edge_weight = self.edge_mlp(edge_features)
 
-        # For training: use mini-batch subgraph sampling to reduce memory
-        if user_idx is not None and item_id is not None:
-            # Get unique nodes in batch
-            batch_users = user_idx.unique()
-            batch_items = item_id.unique()
+        # === Build initial embeddings (same logic as forward_subgraph) ===
+        user_nodes = torch.arange(self.num_users, device=device)
+        item_nodes = torch.arange(self.num_items, device=device)
 
-            # Filter edges: only keep edges where BOTH endpoints are in batch
-            user_mask = (edge_index[0].unsqueeze(1) == batch_users.unsqueeze(0)).any(dim=1)
-            item_mask = (edge_index[1].unsqueeze(1) == (batch_items + self.num_users).unsqueeze(0)).any(dim=1)
-            mask = user_mask & item_mask
+        user_embed = self.user_emb(user_nodes)  # [num_users, embed_dim]
 
-            edge_index_sub = edge_index[:, mask]
-            edge_weight_sub = edge_weight[mask] if edge_weight is not None else None
-        else:
-            # Full graph (for evaluation) - process all edges
-            edge_index_sub = edge_index
-            edge_weight_sub = edge_weight
+        item_audio = self.item_audio_emb[item_nodes].to(device)
+        artist_ids = self.artist_ids[item_nodes].to(device)
+        album_ids = self.album_ids[item_nodes].to(device)
 
-        # Compute embeddings
-        user_embed = self.user_emb.weight
-
-        # --- Audio embeddings via adapter ---
-        item_audio = self.item_audio_emb.to(device)  # frozen audio embeddings
-        artist_ids = self.artist_ids.to(device)
-        album_ids = self.album_ids.to(device)
-
-        # sum embeddings first
-        item_embed = item_audio + self.artist_emb(artist_ids) + self.album_emb(album_ids)
-
-        # apply trainable adapter instead of self.audio_proj
+        item_embed = (
+                item_audio
+                + self.artist_emb(artist_ids)
+                + self.album_emb(album_ids)
+        )
         item_embed = self.audio_adapter(item_embed)
 
+        # Combine in same order as forward_subgraph (users first, then items)
         x = torch.cat([user_embed, item_embed], dim=0)
 
-        # LGConv layers
+        # === LightGCN propagation ===
         for conv in self.convs:
-            x = conv(x, edge_index_sub, edge_weight=edge_weight_sub)
+            x = conv(x, edge_index, edge_weight=edge_weight)
         x = F.normalize(x, p=2, dim=1)
 
-        # Slice embeddings for batch users and items
-        u_emb = x[user_idx] if user_idx is not None else None
-        i_emb = x[self.num_users + item_id] if item_id is not None else None
+        # === Split back ===
+        user_emb = x[:self.num_users]
+        item_emb = x[self.num_users:]
 
-        # Alignment loss only on positive items
-        if return_projections and u_emb is not None and pos_item_id is not None:
-            pos_emb = x[self.num_users + pos_item_id]
-            align_loss = (1 - F.cosine_similarity(u_emb, pos_emb, dim=-1)).mean()
-        else:
-            align_loss = torch.tensor(0.0, device=device)
+        # Alignment loss placeholder (not used for full-graph inference)
+        align_loss = torch.tensor(0.0, device=device)
 
-        return u_emb, i_emb, align_loss
+        return user_emb, item_emb, align_loss
 
     def forward_subgraph(self, batch_nodes, edge_index_sub):
         """

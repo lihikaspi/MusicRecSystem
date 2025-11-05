@@ -3,6 +3,7 @@ from config import config
 from ANN_search.ANN_index import retrieve_recs
 from ANN_search.ANN_eval import eval_recs
 
+
 def check_prev_files():
     """
     check for the files created in the previous stage.
@@ -22,8 +23,8 @@ def check_prev_files():
 
 
 def main():
-  rec_song_ids = retrieve_recs(config)
-  eval_recs(rec_song_ids, config)
+  recs = retrieve_recs(config)
+  eval_recs(recs, config)
 
 
 if __name__ == "__main__":

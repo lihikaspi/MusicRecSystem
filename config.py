@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 import torch
+import torch.distributed as dist
 from typing import List, Tuple, Dict
 import os
 
@@ -122,9 +123,9 @@ class PathsConfig:
         }
 
         self.trained_gnn = f"{self.gnn_models_dir}/best_model.pth"
-        self.best_param = f"{self.gnn_models_dir}/best_param.txt"
-        self.user_embeddings_gnn = f"{self.gnn_models_dir}/user_embeddings.pt"
-        self.song_embeddings_gnn = f"{self.gnn_models_dir}/song_embeddings.pt"
+        self.best_param = f"{self.gnn_models_dir}/best_params.txt"
+        self.user_embeddings_gnn = f"{self.gnn_models_dir}/user_embeddings.npz"
+        self.song_embeddings_gnn = f"{self.gnn_models_dir}/song_embeddings.npz"
 
         self.ann_index = f"{self.ann_models_dir}/index.faiss"
         self.ann_song_ids = f"{self.ann_models_dir}/song_ids.npy"
@@ -163,7 +164,7 @@ class PreprocessingConfig:
 # -------------------
 @dataclass
 class GNNConfig:
-    device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     seed: int = 42
 
     embed_dim: int = 128
