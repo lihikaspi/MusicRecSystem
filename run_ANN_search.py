@@ -1,7 +1,7 @@
 import os
 from config import config
-from ANN_search.ANN_index import retrieve_recs
-from ANN_search.ANN_eval import eval_recs
+from ANN_search.ANN_index import ANNIndex
+from ANN_search.ANN_eval import RecEvaluator
 
 
 def check_prev_files():
@@ -23,10 +23,12 @@ def check_prev_files():
 
 
 def main():
-  recs = retrieve_recs(config)
-  eval_recs(recs, config)
+    index = ANNIndex(config)
+    recs = index.retrieve_recs()
+    evaluator = RecEvaluator(recs, config)
+    evaluator.eval()
 
 
 if __name__ == "__main__":
-  check_prev_files()
-  main()
+    check_prev_files()
+    main()
