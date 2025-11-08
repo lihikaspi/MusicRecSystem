@@ -5,6 +5,7 @@ from GNN_model.train_GNN import GNNTrainer
 from GNN_model.GNN_class import LightGCN
 from GNN_model.eval_GNN import GNNEvaluator
 from config import config
+from GNN_model.diagnostics import diagnose_embedding_scales
 
 
 def check_prev_files():
@@ -68,15 +69,18 @@ def main():
     torch.cuda.empty_cache()
     train_graph = torch.load(config.paths.train_graph_file)
 
-    print("Initializing the GNN model")
     model = LightGCN(train_graph, config)
+
+    audio_scale, metadata_scale = diagnose_embedding_scales(model)
+    model.audio_scale = audio_scale
+    model.metadata_scale = metadata_scale
 
     print("Starting training...")
     trainer = GNNTrainer(model, train_graph, config)
     trainer.train()
 
     model.load_state_dict(torch.load(config.paths.trained_gnn, map_location=config.gnn.device))
-    test_evaluation(model, train_graph, config.gnn.k_hit)
+    # test_evaluation(model, train_graph, config.gnn.k_hit)
 
     save_final_embeddings(model, config.paths.user_embeddings_gnn, config.paths.song_embeddings_gnn)
 

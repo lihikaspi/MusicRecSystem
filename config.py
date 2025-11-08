@@ -164,12 +164,11 @@ class PreprocessingConfig:
 # -------------------
 @dataclass
 class GNNConfig:
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     seed: int = 42
 
     embed_dim: int = 128
     num_layers: int = 2
-    init_std: float = 0.1
     lambda_align: float = 0.0
     freeze_audio: bool = True
     audio_lr_scale: float = 0.1
@@ -180,7 +179,12 @@ class GNNConfig:
     listen_weight: float = 0.8
     neutral_neg_weight: float = 0.3
 
-    lr: float = 0.002
+    lr: float = 0.05  # CHANGED from 0.05
+    lr_decay: float = 0.98
+    momentum: float = 0.9
+    max_grad_norm: float = 1.0
+    init_std: float = 0.01
+
     num_epochs: int = 20
     batch_size: int = 64
     weight_decay: float = 1e-4
