@@ -6,6 +6,45 @@ from torch_geometric.data import HeteroData
 from config import Config
 
 
+def print_model_info(model):
+    """
+    Prints the total number of parameters, trainable parameters,
+    and estimated model size in megabytes (MB) and gigabytes (GB).
+
+    This calculation assumes parameters are stored in float32 format (4 bytes per param).
+
+    Args:
+        model (torch.nn.Module): The PyTorch model.
+    """
+
+    total_params = 0
+    trainable_params = 0
+
+    # Iterate over all parameters in the model
+    # self.parameters() is available because model is an nn.Module
+    for param in model.parameters():
+        total_params += param.numel()
+        if param.requires_grad:
+            trainable_params += param.numel()
+
+    # --- Calculate Model Size ---
+    bytes_per_param = 4  # Assuming float32
+    total_bytes = total_params * bytes_per_param
+    total_mb = total_bytes / (1024 ** 2)
+    total_gb = total_bytes / (1024 ** 3)
+
+    # Print the information
+    print(f"--- Model '{model.__class__.__name__}' Info (from __init__) ---")
+    print(f"Total Parameters:     {total_params:,}")
+    print(f"Trainable Parameters: {trainable_params:,}")
+    print(f"Non-Trainable Params: {total_params - trainable_params:,}")
+    print("-----------------------------------")
+    print(f"Estimated Size (float32):")
+    print(f"  {total_mb:.4f} MB")
+    print(f"  {total_gb:.6f} GB")
+    print("-----------------------------------")
+
+
 class EdgeWeightMLP(nn.Module):
     def __init__(self, config: Config):
         super().__init__()
@@ -54,8 +93,8 @@ class LightGCN(nn.Module):
         nn.init.xavier_uniform_(self.album_emb.weight)
 
         # **FIX 3: Optimal scaling from diagnostic (30% audio, 70% metadata)**
-        self.audio_scale = 0.30  # Audio contributes 30%
-        self.metadata_scale = 0.44  # Metadata contributes 70%
+        self.audio_scale = config.gnn.audio_scale
+        self.metadata_scale = config.gnn.metadata_scale
 
         # **FIX 4: Optional: Add projection layer for audio (comment out if OOM)**
         # audio_dim = data['item'].x.shape[1]
@@ -73,7 +112,10 @@ class LightGCN(nn.Module):
         self.edge_mlp = EdgeWeightMLP(config)
         self.convs = nn.ModuleList([LGConv() for _ in range(self.num_layers)])
 
+        print_model_info(self)
+
         print(">>> finished GNN init")
+
 
     def _get_item_embeddings(self, item_nodes, device):
         """
@@ -121,14 +163,24 @@ class LightGCN(nn.Module):
         # Concatenate users + items
         x = torch.cat([user_embed, item_embed], dim=0)
 
-        # LightGCN propagation
-        all_emb = [x]
-        for conv in self.convs:
-            x = conv(x, edge_index, edge_weight=edge_weight)
-            all_emb.append(x)
+        # LightGCN propagation with memory-efficient accumulation
 
-        # **FIX 7: Average all layer outputs (standard LightGCN)**
-        x = torch.stack(all_emb, dim=0).mean(dim=0)
+        # 'all_emb_sum' will accumulate the embeddings from all layers.
+        # We start it with the initial embeddings (layer 0).
+        all_emb_sum = x
+
+        for conv in self.convs:
+            # Propagate to get the next layer's embeddings
+            x = conv(x, edge_index, edge_weight=edge_weight)
+
+            # Add the new layer's output to the sum.
+            # This is done in-place (or creates one temporary tensor)
+            # instead of storing all previous tensors.
+            all_emb_sum = all_emb_sum + x
+
+        # We have (num_layers + 1) total layers (layer 0 + the GCN layers)
+        # Get the mean by dividing the sum.
+        x = all_emb_sum / (self.num_layers + 1)
 
         # Normalize final embeddings
         x = F.normalize(x, p=2, dim=-1)

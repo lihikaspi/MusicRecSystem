@@ -9,8 +9,8 @@ def check_prev_files():
     check for the files created in the previous stage.
     if at least one file is missing raises FileNotFoundError
     """
-    needed = [config.paths.song_embeddings_gnn, config.paths.audio_embeddings_gnn,
-              config.paths.song_embeddings_gnn]
+    needed = [config.paths.user_embeddings_gnn, config.paths.song_embeddings_gnn,
+              config.paths.cold_start_songs_file]
     fail = False
     for file in needed:
       if not os.path.exists(file):
@@ -25,8 +25,8 @@ def check_prev_files():
 def main():
     index = ANNIndex(config)
     recs = index.retrieve_recs()
-    evaluator = RecEvaluator(recs, config)
-    evaluator.eval()
+    # evaluator = RecEvaluator(recs, config)
+    # evaluator.eval()
 
 
 if __name__ == "__main__":

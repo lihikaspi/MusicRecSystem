@@ -136,6 +136,8 @@ class PathsConfig:
 # -------------------
 @dataclass
 class PreprocessingConfig:
+    low_interaction_threshold: int = 600
+    high_interaction_threshold: int = 6000
     edge_type_mapping: Dict[str, int] = field(default_factory=lambda: {
         "listen": 1,
         "like": 2,
@@ -143,8 +145,6 @@ class PreprocessingConfig:
         "unlike": 4,
         "undislike": 5
     })
-    low_interaction_threshold: int = 600
-    high_interaction_threshold: int = 1000
     weights: Dict[str, float] = field(default_factory=lambda: {
         "listen": 0.7,
         "like": 1.0,
@@ -168,7 +168,7 @@ class GNNConfig:
     seed: int = 42
 
     embed_dim: int = 128
-    num_layers: int = 2
+    num_layers: int = 3
     lambda_align: float = 0.0
     freeze_audio: bool = True
     audio_lr_scale: float = 0.1
@@ -179,19 +179,21 @@ class GNNConfig:
     listen_weight: float = 0.8
     neutral_neg_weight: float = 0.3
 
-    lr: float = 0.05  # CHANGED from 0.05
+    lr: float = 0.01
     lr_decay: float = 0.98
     momentum: float = 0.9
     max_grad_norm: float = 1.0
     init_std: float = 0.01
 
     num_epochs: int = 20
-    batch_size: int = 64
-    weight_decay: float = 1e-4
+    batch_size: int = 32
+    weight_decay: float = 1e-5
     num_workers: int = 0
     eval_every: int = 5
-    neg_samples_per_pos = 5
-    tau: float = 0.2
+    neg_samples_per_pos: int = 5
+    accum_steps: int = 4
+    audio_scale: float = 0.3
+    metadata_scale: float = 0.418
 
     k_hit: int = 10
 

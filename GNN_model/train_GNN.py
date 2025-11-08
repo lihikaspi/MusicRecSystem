@@ -132,7 +132,7 @@ class GNNTrainer:
             collate_fn=collate_bpr
         )
 
-        self.edge_index_full = train_graph['user', 'interacts', 'item'].edge_index.to(self.device)
+        self.edge_index_full = train_graph['user', 'interacts', 'item'].edge_index.cpu()
 
         # **MEMORY-EFFICIENT: No momentum storage, just scalar tracking**
         self.lr_base = config.gnn.lr
@@ -145,7 +145,7 @@ class GNNTrainer:
         self.warmup_steps = 100  # Gradual warmup
 
         # **Gradient accumulation to simulate larger batches without memory cost**
-        self.accum_steps = 2  # Accumulate over 2 batches
+        self.accum_steps = config.gnn.accum_steps  # Accumulate over 2 batches
 
     def _get_lr(self, epoch):
         """
@@ -223,6 +223,7 @@ class GNNTrainer:
                 param.data.add_(grad, alpha=-param_lr)
 
     def train(self):
+        print(f">>> starting training")
         os.makedirs(os.path.dirname(self.save_path), exist_ok=True)
         self.model.to(self.device)
 
@@ -283,20 +284,20 @@ class GNNTrainer:
                 neg_emb_sub = x_sub[node_map[i_neg_idx]]
 
                 # **DIAGNOSTIC: Print every 10 batches**
-                if batch_idx % 10 == 0:
-                    with torch.no_grad():
-                        item_audio = self.model.item_audio_emb[item_nodes_sub].to(self.device)
-                        artist_emb = self.model.artist_emb(self.model.artist_ids[item_nodes_sub].to(self.device))
-                        album_emb = self.model.album_emb(self.model.album_ids[item_nodes_sub].to(self.device))
-
-                        # **Show scaled norms (what actually goes into the model)**
-                        audio_scaled = (item_audio * self.model.audio_scale).norm(dim=-1).mean()
-                        metadata_scaled = ((artist_emb + album_emb) * self.model.metadata_scale).norm(dim=-1).mean()
-
-                        print(f"\nBatch {batch_idx} | "
-                              f"audio*scale: {audio_scaled:.4f}, "
-                              f"metadata*scale: {metadata_scaled:.4f}, "
-                              f"ratio: {metadata_scaled / audio_scaled:.2f}")
+                # if batch_idx % 10 == 0:
+                #     with torch.no_grad():
+                #         item_audio = self.model.item_audio_emb[item_nodes_sub].to(self.device)
+                #         artist_emb = self.model.artist_emb(self.model.artist_ids[item_nodes_sub].to(self.device))
+                #         album_emb = self.model.album_emb(self.model.album_ids[item_nodes_sub].to(self.device))
+                #
+                #         # **Show scaled norms (what actually goes into the model)**
+                #         audio_scaled = (item_audio * self.model.audio_scale).norm(dim=-1).mean()
+                #         metadata_scaled = ((artist_emb + album_emb) * self.model.metadata_scale).norm(dim=-1).mean()
+                #
+                #         print(f"\nBatch {batch_idx} | "
+                #               f"audio*scale: {audio_scaled:.4f}, "
+                #               f"metadata*scale: {metadata_scaled:.4f}, "
+                #               f"ratio: {metadata_scaled / audio_scaled:.2f}")
 
                 # Compute loss
                 loss = self._bpr_loss(u_emb_sub, pos_emb_sub, neg_emb_sub, pos_weights, neg_weights)
@@ -355,7 +356,7 @@ class GNNTrainer:
             #         print(f"Early stopping at epoch {epoch}")
             #         break
 
-        print(f"\nTraining finished!")
-        print(f"Best loss: {best_loss:.6f}")
+        print(f"\n >>> finished training")
+        # print(f"Best loss: {best_loss:.6f}")
         torch.save(self.model.state_dict(), self.save_path)
         print(f"Model saved to {self.save_path}")

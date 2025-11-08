@@ -36,8 +36,8 @@ class ANNIndex:
 
         # ---- Load cold-start / audio embeddings ----
         audio_df = pd.read_parquet(self.cold_start_songs_file)
-        song_ids_audio = audio_df['item_idx'].to_numpy()
-        song_embs_audio = np.vstack(audio_df['item_normalized_embed'].to_numpy()).astype('float32')
+        song_ids_audio = audio_df['item_id'].to_numpy()
+        song_embs_audio = np.vstack(audio_df['normalized_embed'].to_numpy()).astype('float32')
 
         # ---- Combine ----
         self.song_embs = np.vstack([song_embs_gnn, song_embs_audio])

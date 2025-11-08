@@ -15,17 +15,19 @@ def test_evaluation(model: LightGCN, train_graph, k_hit: int = 10):
     return test_metrics
 
 def objective(trial):
-    lr = trial.suggest_loguniform("lr", 1e-4, 1e-1)
+    lr = trial.suggest_loguniform("lr",1e-3,1e-1)
     batch_size = trial.suggest_categorical("batch_size", [32, 64])
     neg_samples_per_pos = trial.suggest_int("neg_samples_per_pos", 1, 10)
     listen_weight = trial.suggest_float("listen_weight", 0.5, 0.9)
     neutral_neg_weight = trial.suggest_float("neutral_neg_weight", 0.1, 0.5)
+    num_layers = trial.suggest_int("num_layers", 1, 10)
 
     config.gnn.lr = lr
     config.gnn.batch_size = batch_size
     config.gnn.neg_samples_per_pos = neg_samples_per_pos
     config.gnn.listen_weight = listen_weight
     config.gnn.neutral_neg_weight = neutral_neg_weight
+    config.gnn.num_layers = num_layers
 
     torch.cuda.empty_cache()
 
