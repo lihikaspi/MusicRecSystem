@@ -8,8 +8,12 @@ class RecEvaluator:
     """
     Evaluator class for ANN recommendations.
     """
-    def __init__(self, ann_recs, config: Config):
-        self.ann_recs = ann_recs
+    def __init__(self, recs, config: Config):
+        self.gnn_recs = recs["gnn"]
+        self.content_recs = recs["content"]
+        self.popular_recs = recs["popular"]
+        self.random_recs = recs["random"]
+        self.cf_recs = recs["cf"]
         self.top_k = config.ann.top_k
         self.eval_dir = config.paths.eval_dir # directory (not a single file)
 

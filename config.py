@@ -3,6 +3,7 @@ import torch
 import torch.distributed as dist
 from typing import List, Tuple, Dict
 import os
+import numpy as np
 
 # -------------------
 # DATASET CONFIG
@@ -60,6 +61,11 @@ class PathsConfig:
     val_set_file: str = field(init=False)
     test_set_file: str = field(init=False)
     cold_start_songs_file: str = field(init=False)
+    filtered_audio_embed_file: str = field(init=False)
+    filtered_user_embed_file: str = field(init=False)
+    filtered_song_ids: str = field(init=False)
+    filtered_user_ids: str = field(init=False)
+    popular_song_ids: str = field(init=False)
     train_edges_file: str = field(init=False)
     train_graph_file: str = field(init=False)
     test_graph_file: str = field(init=False)
@@ -72,8 +78,10 @@ class PathsConfig:
     user_embeddings_gnn: str = field(init=False)
     song_embeddings_gnn: str = field(init=False)
 
-    ann_index: str = field(init=False)
-    ann_song_ids: str = field(init=False)
+    gnn_index: str = field(init=False)
+    gnn_song_ids: str = field(init=False)
+    content_index: str = field(init=False)
+    content_song_ids: str = field(init=False)
 
     def __post_init__(self):
         os.makedirs(self.processed_dir, exist_ok=True)
@@ -104,6 +112,11 @@ class PathsConfig:
         self.val_set_file = f"{self.processed_dir}/val.parquet"
         self.test_set_file = f"{self.processed_dir}/test.parquet"
         self.cold_start_songs_file = f"{self.processed_dir}/cold_start_songs.parquet"
+        self.filtered_audio_embed_file = f"{self.processed_dir}/filtered_audio_embed.parquet"
+        self.filtered_user_embed_file = f"{self.processed_dir}/filtered_user_embed.parquet"
+        self.filtered_song_ids = f"{self.processed_dir}/filtered_song_ids.npy"
+        self.filtered_user_ids = f"{self.processed_dir}/filtered_user_ids.npy"
+        self.popular_song_ids = f"{self.processed_dir}/popular_song_ids.npy"
         self.train_edges_file = f"{self.processed_dir}/train_edges.parquet"
         self.train_graph_file = f"{self.processed_dir}/train_graph.pt"
         self.test_graph_file = f"{self.processed_dir}/test_graph.pt"
@@ -127,8 +140,10 @@ class PathsConfig:
         self.user_embeddings_gnn = f"{self.gnn_models_dir}/user_embeddings.npz"
         self.song_embeddings_gnn = f"{self.gnn_models_dir}/song_embeddings.npz"
 
-        self.ann_index = f"{self.ann_models_dir}/index.faiss"
-        self.ann_song_ids = f"{self.ann_models_dir}/song_ids.npy"
+        self.gnn_index = f"{self.ann_models_dir}/gnn_index.faiss"
+        self.gnn_song_ids = f"{self.ann_models_dir}/gnn_song_ids.npy"
+        self.content_index = f"{self.ann_models_dir}/content_index.faiss"
+        self.content_song_ids = f"{self.ann_models_dir}/content_song_ids.npy"
 
 
 # -------------------
@@ -165,7 +180,6 @@ class PreprocessingConfig:
 @dataclass
 class GNNConfig:
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    seed: int = 42
 
     embed_dim: int = 128
     num_layers: int = 3
@@ -212,8 +226,12 @@ class GNNConfig:
 @dataclass
 class ANNConfig:
     top_k: int = 10
+    top_sim_items: int = 50
     nprobe: int = 32
     nlist: int = 4096
+
+    seed: int = 42
+    np.random.seed(seed)
 
 
 # -------------------

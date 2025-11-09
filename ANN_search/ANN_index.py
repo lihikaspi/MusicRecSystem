@@ -5,12 +5,19 @@ from config import Config
 
 
 class ANNIndex:
-    def __init__(self, config: Config):
-        self.user_embeddings_gnn = config.paths.user_embeddings_gnn
-        self.song_embeddings_gnn = config.paths.song_embeddings_gnn
-        self.cold_start_songs_file = config.paths.cold_start_songs_file
-        self.ann_index_path = config.paths.ann_index
-        self.ann_song_ids_path = config.paths.ann_song_ids
+    def __init__(self, index_type: str, config: Config):
+        self.index_type = index_type
+        self.ann_index_path = getattr(config.paths, f"{self.index_type}_index")
+        self.ann_song_ids_path = getattr(config.paths, f"{self.index_type}_song_ids")
+
+        if index_type == "gnn":
+            self.user_embeddings_gnn = config.paths.user_embeddings_gnn
+            self.song_embeddings_gnn = config.paths.song_embeddings_gnn
+            self.cold_start_songs_file = config.paths.cold_start_songs_file
+
+        elif index_type == "content":
+            self.user_content_embeddings = config.paths.filtered_user_embed_file
+            self.audio_embeddings = config.paths.filtered_audio_embed_file
 
         self.nlist = config.ann.nlist
         self.nprobe = config.ann.nprobe
@@ -22,7 +29,15 @@ class ANNIndex:
         self.user_ids = None
         self.song_embs = None
 
-    def load_embeddings(self):
+
+    def _load_content_embeddings(self):
+        """Load content-based embeddings."""
+        # TODO: write according to final file format
+        # TODO: load user+ids and songs+ids
+        pass
+
+
+    def _load_gnn_embeddings(self):
         """Load user and song embeddings, combining GNN and audio-based ones."""
         # ---- Load user embeddings ----
         user_data = np.load(self.user_embeddings_gnn)
@@ -44,6 +59,16 @@ class ANNIndex:
         self.song_ids = np.concatenate([song_ids_gnn, song_ids_audio])
 
         print(f"Loaded {len(self.user_embs)} users and {len(self.song_embs)} songs.")
+
+
+    def load_embeddings(self):
+        """Load embeddings based on the index type."""
+        if self.index_type == "content":
+            self._load_content_embeddings()
+        elif self.index_type == "gnn":
+            self._load_gnn_embeddings()
+        else:
+            raise ValueError(f"Invalid index type: {self.index_type}")
 
 
     def build_index(self):
@@ -98,7 +123,7 @@ class ANNIndex:
         rec_scores = D
 
         results = [
-            {"user_id": uid, "recommended_song_ids": recs.tolist()}
+            {"user_id": uid, "song_ids": recs.tolist()}
             for uid, recs in zip(self.user_ids, rec_song_ids)
         ]
 

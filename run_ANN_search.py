@@ -1,5 +1,9 @@
 import os
+import pandas as pd
+import numpy as np
 from config import config
+from scipy.sparse import csr_matrix
+from sklearn.preprocessing import normalize
 from ANN_search.ANN_index import ANNIndex
 from ANN_search.ANN_eval import RecEvaluator
 
@@ -10,7 +14,10 @@ def check_prev_files():
     if at least one file is missing raises FileNotFoundError
     """
     needed = [config.paths.user_embeddings_gnn, config.paths.song_embeddings_gnn,
-              config.paths.cold_start_songs_file]
+              config.paths.cold_start_songs_file, config.paths.filtered_audio_embed_file,
+              config.paths.filtered_user_embed_file, config.paths.filtered_songs_id,
+              config.paths.filtered_user_ids, config.paths.popular_song_ids,
+              config.paths.interactions_file]
     fail = False
     for file in needed:
       if not os.path.exists(file):
@@ -22,11 +29,122 @@ def check_prev_files():
       print("All needed files are present! starting indexing ... ")
 
 
+def recommend_popular():
+    # TODO: create a rec list of the same top-k popular songs for each user
+    song_ids = np.load(config.paths.popular_song_ids)
+    user_ids = np.load(config.paths.filtered_user_ids)
+    top_k_ids = song_ids[config.ann.top_k:]
+
+    results = [
+        {"user_id": uid, "song_ids": recs.tolist()}
+        for uid, recs in zip(user_ids, top_k_ids)
+    ]
+
+    return results
+
+
+def recommend_random():
+    song_ids = np.load(config.paths.filtered_songs_id)
+    user_ids = np.load(config.paths.filtered_user_ids)
+    num_users = len(user_ids)
+    num_songs = len(song_ids)
+    rec_song_ids = np.random.randint(num_songs, size=(num_users, config.ann.top_k))
+
+    results = [
+        {"user_id": uid, "song_ids": recs.tolist()}
+        for uid, recs in zip(user_ids, rec_song_ids)
+    ]
+
+    return results
+
+
+def recommend_cf(top_k=10, top_sim_items=50):
+    """
+    Scalable item-based CF for large user-item matrices using sparse matrices.
+    Returns recommendations in [{'user_id': uid, 'song_ids': [...]}, ...] format.
+    """
+    # TODO: fix according to interactions file
+    # ---- Step 1: Load interactions ----
+    interactions = pd.read_parquet(config.paths.interactions_parquet)
+    # columns: ['user_id', 'song_id']
+
+    # ---- Step 2: Map IDs to indices ----
+    user_to_idx = {u: i for i, u in enumerate(config.user_ids)}
+    idx_to_user = {i: u for i, u in enumerate(config.user_ids)}
+    song_to_idx = {s: i for i, s in enumerate(config.song_ids)}
+    idx_to_song = {i: s for i, s in enumerate(config.song_ids)}
+
+    num_users = len(config.user_ids)
+    num_songs = len(config.song_ids)
+
+    # ---- Step 3: Build sparse user-item matrix ----
+    rows, cols, data = [], [], []
+    for row in interactions.itertuples(index=False):
+        u, s = row.user_id, row.song_id
+        if u in user_to_idx and s in song_to_idx:
+            rows.append(user_to_idx[u])
+            cols.append(song_to_idx[s])
+            data.append(1.0)  # implicit feedback
+
+    R = csr_matrix((data, (rows, cols)), shape=(num_users, num_songs), dtype=np.float32)
+
+    # ---- Step 4: Normalize item vectors ----
+    # Each column = item vector
+    R_item = R.T.tocsr()
+    R_item_norm = normalize(R_item, axis=1)  # L2 normalize
+
+    # ---- Step 5: Compute top-similarity items ----
+    # Sparse dot product to compute similarities efficiently
+    top_neighbors = {}
+    for i in range(num_songs):
+        vec_i = R_item_norm[i]
+        sims = vec_i.dot(R_item_norm.T).toarray().ravel()  # sparse dot to dense
+        sims[i] = 0.0  # ignore self
+        top_idx = np.argsort(-sims)[:top_sim_items]
+        top_neighbors[i] = {j: sims[j] for j in top_idx if sims[j] > 0}
+
+    # ---- Step 6: Generate recommendations ----
+    results = []
+    for u_idx in range(num_users):
+        user_vector = R[u_idx].indices  # items user interacted with
+        scores = {}
+        for item in user_vector:
+            neighbors = top_neighbors.get(item, {})
+            for n_item, sim in neighbors.items():
+                if n_item not in user_vector:  # skip already seen
+                    scores[n_item] = scores.get(n_item, 0) + sim
+        # pick top-k
+        top_items = sorted(scores, key=lambda x: -scores[x])[:top_k]
+        results.append({
+            "user_id": idx_to_user[u_idx],
+            "song_ids": [idx_to_song[i] for i in top_items]
+        })
+
+    return results
+
+
+
 def main():
-    index = ANNIndex(config)
-    recs = index.retrieve_recs()
-    # evaluator = RecEvaluator(recs, config)
-    # evaluator.eval()
+    gnn_index = ANNIndex("gnn", config)
+    gnn_recs = gnn_index.retrieve_recs()
+
+    content_index = ANNIndex("content", config)
+    content_recs = content_index.retrieve_recs()
+
+    popular_recs = recommend_popular()
+    random_recs = recommend_random()
+    cf_recs = recommend_cf()
+
+    recs = {
+        "gnn": gnn_recs,
+        "content": content_recs,
+        "popular": popular_recs,
+        "random": random_recs,
+        "cf": cf_recs
+    }
+
+    evaluator = RecEvaluator(recs, config)
+    evaluator.eval()
 
 
 if __name__ == "__main__":
