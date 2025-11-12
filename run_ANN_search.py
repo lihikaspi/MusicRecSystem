@@ -30,15 +30,11 @@ def check_prev_files():
 
 
 def recommend_popular():
-    # TODO: create a rec list of the same top-k popular songs for each user
     song_ids = np.load(config.paths.popular_song_ids)
     user_ids = np.load(config.paths.filtered_user_ids)
     top_k_ids = song_ids[config.ann.top_k:]
 
-    results = [
-        {"user_id": uid, "song_ids": recs.tolist()}
-        for uid, recs in zip(user_ids, top_k_ids)
-    ]
+    results = {uid: recs.tolist() for uid, recs in zip(user_ids, top_k_ids)}
 
     return results
 
@@ -50,37 +46,36 @@ def recommend_random():
     num_songs = len(song_ids)
     rec_song_ids = np.random.randint(num_songs, size=(num_users, config.ann.top_k))
 
-    results = [
-        {"user_id": uid, "song_ids": recs.tolist()}
-        for uid, recs in zip(user_ids, rec_song_ids)
-    ]
+    results = {uid: recs.tolist() for uid, recs in zip(user_ids, rec_song_ids)}
 
     return results
 
 
 def recommend_cf(top_k=10, top_sim_items=50):
     """
-    Scalable item-based CF for large user-item matrices using sparse matrices.
-    Returns recommendations in [{'user_id': uid, 'song_ids': [...]}, ...] format.
+    Memory-friendly item-based CF using sparse operations.
+    Returns a dict: {user_id: [song_id1, song_id2, ...], ...}
     """
-    # TODO: fix according to interactions file
     # ---- Step 1: Load interactions ----
     interactions = pd.read_parquet(config.paths.positive_interactions_file)
-    # columns: ['user_id', 'song_id']
+    # columns: ['user_id', 'item_id']
 
-    # ---- Step 2: Map IDs to indices ----
-    user_to_idx = {u: i for i, u in enumerate(config.user_ids)}
-    idx_to_user = {i: u for i, u in enumerate(config.user_ids)}
-    song_to_idx = {s: i for i, s in enumerate(config.song_ids)}
-    idx_to_song = {i: s for i, s in enumerate(config.song_ids)}
+    # ---- Step 2: Load user and song IDs ----
+    user_ids = np.load(config.paths.filtered_user_ids)
+    song_ids = np.load(config.paths.filtered_songs_id)
 
-    num_users = len(config.user_ids)
-    num_songs = len(config.song_ids)
+    user_to_idx = {u: i for i, u in enumerate(user_ids)}
+    idx_to_user = {i: u for i, u in enumerate(user_ids)}
+    song_to_idx = {s: i for i, s in enumerate(song_ids)}
+    idx_to_song = {i: s for i, s in enumerate(song_ids)}
+
+    num_users = len(user_ids)
+    num_songs = len(song_ids)
 
     # ---- Step 3: Build sparse user-item matrix ----
     rows, cols, data = [], [], []
     for row in interactions.itertuples(index=False):
-        u, s = row.user_id, row.song_id
+        u, s = row.user_id, row.item_id
         if u in user_to_idx and s in song_to_idx:
             rows.append(user_to_idx[u])
             cols.append(song_to_idx[s])
@@ -89,39 +84,37 @@ def recommend_cf(top_k=10, top_sim_items=50):
     R = csr_matrix((data, (rows, cols)), shape=(num_users, num_songs), dtype=np.float32)
 
     # ---- Step 4: Normalize item vectors ----
-    # Each column = item vector
+    # L2 normalize columns (item vectors)
     R_item = R.T.tocsr()
-    R_item_norm = normalize(R_item, axis=1)  # L2 normalize
+    R_item_norm = normalize(R_item, axis=1)
 
-    # ---- Step 5: Compute top-similarity items ----
-    # Sparse dot product to compute similarities efficiently
+    # ---- Step 5: Compute top neighbors for each item sparsely ----
     top_neighbors = {}
     for i in range(num_songs):
         vec_i = R_item_norm[i]
-        sims = vec_i.dot(R_item_norm.T).toarray().ravel()  # sparse dot to dense
-        sims[i] = 0.0  # ignore self
-        top_idx = np.argsort(-sims)[:top_sim_items]
-        top_neighbors[i] = {j: sims[j] for j in top_idx if sims[j] > 0}
+        # Only compute dot product with items that share users
+        coo = vec_i.dot(R_item_norm.T)
+        # convert to dict of top items
+        if coo.nnz > 0:
+            sims = coo.toarray().ravel()
+            sims[i] = 0.0  # ignore self
+            top_idx = np.argsort(-sims)[:top_sim_items]
+            top_neighbors[i] = {j: sims[j] for j in top_idx if sims[j] > 0}
 
     # ---- Step 6: Generate recommendations ----
-    results = []
+    results_dict = {}
     for u_idx in range(num_users):
         user_vector = R[u_idx].indices  # items user interacted with
         scores = {}
         for item in user_vector:
             neighbors = top_neighbors.get(item, {})
             for n_item, sim in neighbors.items():
-                if n_item not in user_vector:  # skip already seen
+                if n_item not in user_vector:
                     scores[n_item] = scores.get(n_item, 0) + sim
-        # pick top-k
         top_items = sorted(scores, key=lambda x: -scores[x])[:top_k]
-        results.append({
-            "user_id": idx_to_user[u_idx],
-            "song_ids": [idx_to_song[i] for i in top_items]
-        })
+        results_dict[idx_to_user[u_idx]] = [idx_to_song[i] for i in top_items]
 
-    return results
-
+    return results_dict
 
 
 def main():

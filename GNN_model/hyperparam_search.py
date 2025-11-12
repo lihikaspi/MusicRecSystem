@@ -12,7 +12,6 @@ def test_evaluation(model: LightGCN, train_graph: HeteroData):
     test_evaluator = GNNEvaluator(model, train_graph, "test", config)
     test_metrics = test_evaluator.evaluate()
 
-    # TODO: decide on main metric
     return test_metrics['ndcg@k']
 
 

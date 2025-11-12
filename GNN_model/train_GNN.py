@@ -371,7 +371,6 @@ class GNNTrainer:
 
         print(f"\n >>> finished training")
 
-        # TODO: fix to be written pretty in the txt file
         if not trial:
             print(f"Best NDCG@K: {best_ndcg:.6f}")
             with open(self.config.paths.val_eval, "w") as f:

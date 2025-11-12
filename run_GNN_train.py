@@ -44,7 +44,6 @@ def test_evaluation(model: LightGCN, train_graph: HeteroData):
     print(f"  Dislike-FPR@{k_hit}: {test_metrics['dislike_fpr@k']:.4f}")
     print(f"  Novelty@{k_hit}: {test_metrics['novelty@k']:.4f}")
 
-    # TODO: fix to be written pretty in the txt file
     with open(config.paths.test_eval, "w") as f:
         json.dump(test_metrics, f, indent=4)
 
