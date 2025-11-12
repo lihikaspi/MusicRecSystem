@@ -69,6 +69,8 @@ class PathsConfig:
     train_edges_file: str = field(init=False)
     train_graph_file: str = field(init=False)
     test_graph_file: str = field(init=False)
+    val_scores_file: str = field(init=False)
+    test_scores_file: str = field(init=False)
 
     raw_data_files: List[str] = field(init=False)
     split_paths: Dict[str, str] = field(init=False)
@@ -120,6 +122,8 @@ class PathsConfig:
         self.train_edges_file = f"{self.processed_dir}/train_edges.parquet"
         self.train_graph_file = f"{self.processed_dir}/train_graph.pt"
         self.test_graph_file = f"{self.processed_dir}/test_graph.pt"
+        self.val_scores_file = f"{self.processed_dir}/val_scores.parquet"
+        self.test_scores_file = f"{self.processed_dir}/test_scores.parquet"
 
         self.raw_data_files = [
             self.raw_listens_file,
@@ -172,6 +176,12 @@ class PreprocessingConfig:
         "val": 0.1,
         "test": 0.1
     })
+    novelty = {
+        "unseen_boost": 0.35,  # extra multiplier for songs never seen
+        "train_penalty": 0.20,  # how hard we penalise over-played songs
+        "recency_beta": 0.0001,  # exponential decay of recency penalty
+        "max_familiarity": 20,  # denominator for familiarity normalisation
+    }
 
 
 # -------------------

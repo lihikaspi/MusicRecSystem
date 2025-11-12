@@ -23,22 +23,10 @@ class GNNEvaluator:
         # Cache for embeddings
         self._cached_embeddings = None
 
-    def _load_and_process(self, parquet_path: str) -> pd.DataFrame:
-        """
-        Load parquet and collapse multiple events to the latest per (user, item).
-        """
-        table = pq.read_table(parquet_path,
-                              columns=['user_idx', 'item_idx', 'event_type', 'timestamp'])
-        df = table.to_pandas()
-
-        # More efficient groupby operation
-        df = (df.sort_values("timestamp")
-              .groupby(["user_idx", "item_idx"], as_index=False)
-              .last())
-
-        # Vectorized mapping
-        df["label"] = df["event_type"].map(self.event_map).fillna(0).astype(np.int8)
-
+    def _load_and_process(self, scores_path: str) -> pd.DataFrame:
+        """Load the pre-computed scores"""
+        df = pd.read_parquet(scores_path)
+        df = df.rename(columns={"user_id": "user_idx", "item_id": "item_idx"})
         return df
 
     def _get_embeddings(self):
@@ -52,12 +40,12 @@ class GNNEvaluator:
                 self._cached_embeddings = (user_emb.cpu(), item_emb.cpu())
         return self._cached_embeddings
 
-    def evaluate(self, parquet_path: str, k: int = 10) -> Dict[str, float]:
+    def evaluate(self, scores_path: str, k: int = 10) -> Dict[str, float]:
         """
-        Evaluate model on validation/test parquet.
-        Returns a dictionary of metrics.
+        Same interface as before, now using **adjusted_score** as ground-truth relevance.
+        Also returns a new metric: **novelty@k** (fraction of top-k that are unseen).
         """
-        df = self._load_and_process(parquet_path)
+        df = self._load_and_process(scores_path)
         user_emb, item_emb = self._get_embeddings()
 
         metrics = {
@@ -65,73 +53,59 @@ class GNNEvaluator:
             "hit_like@k": [],
             "hit_like_listen@k": [],
             "auc": [],
-            "dislike_fpr@k": []
+            "dislike_fpr@k": [],
+            "novelty@k": []
         }
 
-        unique_users = df['user_idx'].unique()
-
-        for uid, group in unique_users:
-            user_data = df[df['user_idx'] == uid]
-
+        for uid, group in df.groupby('user_idx'):
             u = user_emb[uid:uid + 1]
-            scores = torch.mm(u, item_emb.T).squeeze(0).numpy()
+            pred = torch.mm(u, item_emb.T).squeeze(0).cpu().numpy()
 
-            # Sort top-k
-            if len(scores) > k:
-                topk_idx = np.argpartition(-scores, k)[:k]
-            else:
-                topk_idx = np.argsort(-scores)[:k]
+            # ---- top-k indices (argpartition is fastest) ----
+            topk_idx = np.argpartition(-pred, k)[:k]
+            topk_set = set(topk_idx)
 
-            topk_items = set(topk_idx)
-
-            # Ground truth labels
+            # ---- ground-truth vectors ----
             gt_items = group["item_idx"].values
-            gt_labels = group["label"].values
+            gt_adj = group["adjusted_score"].values
+            gt_seen = group["seen_in_train"].values.astype(bool)
 
-            # Build relevance vector
-            relevance = np.zeros(len(scores), dtype=int)
-            relevance[gt_items] = gt_labels
+            # full relevance vector (size = #items)
+            relevance = np.zeros(len(pred), dtype=float)
+            relevance[gt_items] = gt_adj
 
-            # ---- NDCG ----
-            topk_relevance = relevance[topk_idx]
-            dcg = np.sum((2 ** np.maximum(topk_relevance, 0) - 1) /
-                         np.log2(np.arange(2, len(topk_idx) + 2)))
-
-            sorted_rels = np.sort(np.maximum(relevance[gt_items], 0))[::-1][:k]
-            idcg = np.sum((2 ** sorted_rels - 1) /
-                          np.log2(np.arange(2, len(sorted_rels) + 2)))
-
-            ndcg = dcg / idcg if idcg > 0 else 0.0
+            # ----- NDCG@k (graded) -----
+            top_rel = relevance[topk_idx]
+            dcg = np.sum((2 ** np.maximum(top_rel, 0) - 1) / np.log2(np.arange(2, k + 2)))
+            ideal = np.sort(np.maximum(gt_adj, 0))[::-1][:k]
+            idcg = np.sum((2 ** ideal - 1) / np.log2(np.arange(2, len(ideal) + 2)))
+            ndcg = dcg / (idcg if idcg > 0 else 1.0)
             metrics["ndcg@k"].append(ndcg)
 
-            # ---- Hit@K (like-only) ----
-            like_items = gt_items[gt_labels == 2]
-            hit_like = len(set(like_items) & topk_items) > 0
-            metrics["hit_like@k"].append(float(hit_like))
+            # ----- Hit@k (like-equivalent) -----
+            like_items = gt_items[gt_adj > 1.0]  # >1 ≈ explicit like
+            metrics["hit_like@k"].append(float(len(set(like_items) & topk_set) > 0))
 
-            # ---- Hit@K (like+listen) ----
-            pos_items = gt_items[gt_labels > 0]
-            hit_like_listen = len(set(pos_items) & topk_items) > 0
-            metrics["hit_like_listen@k"].append(float(hit_like_listen))
+            # ----- Hit@k (like+listen) -----
+            pos_items = gt_items[gt_adj > 0.5]
+            metrics["hit_like_listen@k"].append(float(len(set(pos_items) & topk_set) > 0))
 
-            # ---- AUC ----
+            # ----- AUC (pos vs neg) -----
             pos_mask = relevance > 0
             neg_mask = relevance < 0
             if pos_mask.any() and neg_mask.any():
-                try:
-                    y_true = np.concatenate([np.ones(pos_mask.sum()),
-                                             np.zeros(neg_mask.sum())])
-                    y_score = np.concatenate([scores[pos_mask], scores[neg_mask]])
-                    auc = roc_auc_score(y_true, y_score)
-                    metrics["auc"].append(auc)
-                except:
-                    pass  # Skip if AUC computation fails
+                y_true = np.concatenate([np.ones(pos_mask.sum()), np.zeros(neg_mask.sum())])
+                y_score = np.concatenate([pred[pos_mask], pred[neg_mask]])
+                metrics["auc"].append(roc_auc_score(y_true, y_score))
 
-            # ---- Dislike FPR ----
-            dislike_items = gt_items[gt_labels < 0]
-            if len(dislike_items) > 0:
-                dislike_in_topk = len(set(dislike_items) & topk_items) > 0
-                metrics["dislike_fpr@k"].append(float(dislike_in_topk))
+            # ----- Dislike FPR@k -----
+            dislike_items = gt_items[gt_adj < 0]
+            if len(dislike_items):
+                metrics["dislike_fpr@k"].append(float(len(set(dislike_items) & topk_set) > 0))
 
-        # Average across users
-        return {m: float(np.mean(v)) if len(v) > 0 else 0.0 for m, v in metrics.items()}
+            # ----- Novelty@k (fraction unseen) -----
+            unseen_in_topk = sum(1 for i in topk_idx if i not in gt_items)  # never interacted
+            metrics["novelty@k"].append(unseen_in_topk / k)
+
+        # ---- average over users ----
+        return {m: float(np.mean(v)) if len(v) else 0.0 for m, v in metrics.items()}

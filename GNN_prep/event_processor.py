@@ -1,5 +1,7 @@
 import duckdb
 from config import Config
+import numpy as np
+import pandas as pd
 
 class EventProcessor:
     """
@@ -184,5 +186,257 @@ class EventProcessor:
             self.split_ratios = split_ratios
 
         self._split_data()
+        self._compute_relevance_scores()
         self._save_cold_start_songs()
+
+    def _compute_relevance_scores(self):
+        """
+        1. Base relevance  – weighted sum of all events (listen, like, …)
+        2. Novelty factor – unseen boost + train-play penalty + recency decay
+        3. Final adjusted_score = base * (1 + novelty_factor)
+        """
+        w = Config.preprocessing.weights  # existing weights
+        n = Config.preprocessing.novelty  # novelty parameters
+
+        case_base = "CASE e.event_type\n"
+        for etype, weight in w.items():
+            if etype == "listen":
+                case_base += f"    WHEN '{etype}' THEN {weight} * (COALESCE(e.played_ratio_pct,0)/100.0)\n"
+            elif etype in ("like", "undislike"):
+                case_base += f"    WHEN '{etype}' THEN {weight}\n"
+            elif etype in ("dislike", "unlike"):
+                case_base += f"    WHEN '{etype}' THEN -{weight}\n"
+        case_base += "    ELSE 0.0 END"
+
+        for split in ("val", "test"):
+            query = f"""
+                CREATE TEMPORARY TABLE {split}_raw AS
+                SELECT
+                    e.user_id,
+                    e.item_id,
+                    e.event_type,
+                    e.played_ratio_pct,
+                    e.timestamp,
+                    SUM({case_base})                               AS base_relevance,
+                    COUNT(*)                                       AS n_events,
+                    -- train-play counts (0 if never seen in train)
+                    COALESCE(t.play_cnt,0)                         AS train_play_cnt,
+                    -- 1 if the song appears at least once in train for this user
+                    COALESCE(t.seen_in_train,0)                    AS seen_in_train
+                FROM split_data e
+                LEFT JOIN (
+                    SELECT user_id, item_id,
+                           COUNT(*)               AS play_cnt,
+                           1                      AS seen_in_train
+                    FROM split_data
+                    WHERE split = 'train' AND event_type = 'listen'
+                    GROUP BY user_id, item_id
+                ) t
+                    ON e.user_id = t.user_id AND e.item_id = t.item_id
+                WHERE e.split = '{split}'
+                GROUP BY e.user_id, e.item_id, e.timestamp, e.event_type, e.played_ratio_pct,
+                         t.play_cnt, t.seen_in_train
+            """
+
+            self.con.execute(query)
+
+            agg_query = f"""
+                CREATE TEMPORARY TABLE {split}_scores AS
+                SELECT
+                    user_id,
+                    item_id,
+                    SUM(base_relevance)                                                AS base_relevance,
+                    SUM(n_events)                                                      AS total_events,
+
+                    -- Novelty components
+                    MAX(seen_in_train)                                                 AS seen_in_train,
+                    MAX(train_play_cnt)                                                AS train_play_cnt,
+                    MIN(timestamp)                                                     AS earliest_ts,   -- for recency
+                    MAX(timestamp)                                                     AS latest_ts
+
+                FROM {split}_raw
+                GROUP BY user_id, item_id
+            """
+            self.con.execute(agg_query)
+
+            final_query = f"""
+                CREATE TEMPORARY TABLE {split}_final AS
+                SELECT
+                    user_id,
+                    item_id,
+                    base_relevance,
+                    total_events,
+
+                    -- 4a) unseen boost
+                    CASE WHEN seen_in_train = 0 THEN {n['unseen_boost']} ELSE 0 END   AS unseen_boost,
+
+                    -- 4b) train-play penalty (normalised)
+                    LEAST(train_play_cnt, {n['max_familiarity']}) / {n['max_familiarity']} AS norm_familiarity,
+                    -{n['train_penalty']} * LEAST(train_play_cnt, {n['max_familiarity']}) / {n['max_familiarity']} AS train_penalty,
+
+                    -- 4c) recency decay (only if seen before)
+                    CASE
+                        WHEN seen_in_train = 1 THEN
+                            EXP(-{n['recency_beta']} * (EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - latest_ts))))
+                        ELSE 0
+                    END                                                             AS recency_factor,
+
+                    -- 4d) final novelty multiplier (additive)
+                    (CASE WHEN seen_in_train = 0 THEN {n['unseen_boost']} ELSE 0 END)
+                    - {n['train_penalty']} * LEAST(train_play_cnt, {n['max_familiarity']}) / {n['max_familiarity']}
+                    + CASE WHEN seen_in_train = 1 THEN
+                            EXP(-{n['recency_beta']} * (EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - latest_ts))))
+                          ELSE 0 END                                          AS novelty_factor,
+
+                    -- 4e) final adjusted score
+                    base_relevance * (1 + 
+                        (CASE WHEN seen_in_train = 0 THEN {n['unseen_boost']} ELSE 0 END)
+                        - {n['train_penalty']} * LEAST(train_play_cnt, {n['max_familiarity']}) / {n['max_familiarity']}
+                        + CASE WHEN seen_in_train = 1 THEN
+                            EXP(-{n['recency_beta']} * (EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - latest_ts))))
+                          ELSE 0 END
+                    )                                                             AS adjusted_score
+
+                FROM {split}_scores
+            """
+            self.con.execute(final_query)
+
+
+            out_path = Config.paths.val_scores_file if split == "val" else Config.paths.test_scores_file
+            self.con.execute(
+                f"COPY (SELECT user_id, item_id, base_relevance, adjusted_score, total_events, seen_in_train, train_play_cnt FROM {split}_final) TO '{out_path}' (FORMAT PARQUET)")
+            print(f"{split.capitalize()} scores (base + adjusted) saved → {out_path}")
+
+    def _save_filtered_user_ids(self, output_path: str):
+        """
+        Save sorted list of all filtered/encoded user IDs (0 to num_users-1) as npy.
+        """
+        query = f"""
+            SELECT DISTINCT user_id
+            FROM read_parquet('{self.split_paths['train']}')
+            ORDER BY user_id
+        """
+        df = self.con.execute(query).fetch_df()
+        user_ids = df['user_id'].to_numpy(dtype=np.int64)
+        np.save(output_path, user_ids)
+        print(f"Saved {len(user_ids)} filtered user IDs to {output_path}")
+
+    def _save_filtered_song_ids(self, output_path: str):
+        """
+        Save sorted list of all unique filtered song IDs (global item_id) as npy.
+        """
+        query = f"""
+            WITH unique_items AS (
+                SELECT DISTINCT item_id FROM read_parquet('{self.split_paths['train']}')
+                UNION
+                SELECT DISTINCT item_id FROM read_parquet('{self.split_paths['val']}')
+                UNION
+                SELECT DISTINCT item_id FROM read_parquet('{self.split_paths['test']}')
+            )
+            SELECT item_id FROM unique_items ORDER BY item_id
+        """
+        df = self.con.execute(query).fetch_df()
+        song_ids = df['item_id'].to_numpy(dtype=np.int64)
+        np.save(output_path, song_ids)
+        print(f"Saved {len(song_ids)} filtered song IDs to {output_path}")
+
+    def _save_filtered_audio_embeddings(self, output_path: str):
+        """
+        Save audio embeddings for all filtered songs as parquet (item_id, normalized_embed).
+        """
+        query = f"""
+            CREATE OR REPLACE TEMPORARY TABLE filtered_songs_emb AS
+            WITH unique_items AS (
+                SELECT DISTINCT item_id FROM read_parquet('{self.split_paths['train']}')
+                UNION
+                SELECT DISTINCT item_id FROM read_parquet('{self.split_paths['val']}')
+                UNION
+                SELECT DISTINCT item_id FROM read_parquet('{self.split_paths['test']}')
+            )
+            SELECT ui.item_id, emb.normalized_embed
+            FROM unique_items ui
+            JOIN read_parquet('{self.embeddings_path}') emb ON ui.item_id = emb.item_id
+            ORDER BY ui.item_id
+        """
+        self.con.execute(query)
+        self.con.execute(f"COPY filtered_songs_emb TO '{output_path}' (FORMAT PARQUET)")
+        print(
+            f"Saved filtered audio embeddings ({self.con.execute('SELECT COUNT(*) FROM filtered_songs_emb').fetchone()[0]} songs) to {output_path}")
+
+    def _save_most_popular_songs(self, top_k: int, output_path: str):
+        """
+        Save top-K most popular song IDs (based on count of positive interactions in train) as npy.
+        """
+        query = f"""
+            SELECT item_id
+            FROM read_parquet('{self.split_paths['train']}') e
+            WHERE e.event_type IN ('listen', 'like', 'undislike')
+            GROUP BY item_id
+            ORDER BY COUNT(*) DESC
+            LIMIT {top_k}
+        """
+        df = self.con.execute(query).fetch_df()
+        popular_ids = df['item_id'].to_numpy(dtype=np.int64)
+        np.save(output_path, popular_ids)
+        print(f"Saved top-{top_k} popular song IDs to {output_path}")
+
+    def _save_positive_interactions(self, split_name: str, output_path: str):
+        """
+        Save unique positive user-item pairs for a split as parquet (user_id, item_id).
+        """
+        split_path = self.split_paths[split_name]
+        temp_table = f"{split_name}_positive_interactions"
+        query = f"""
+            CREATE OR REPLACE TEMPORARY TABLE {temp_table} AS
+            SELECT DISTINCT user_id, item_id
+            FROM read_parquet('{split_path}')
+            WHERE event_type IN ('listen', 'like', 'undislike')
+            ORDER BY user_id, item_id
+        """
+        self.con.execute(query)
+        self.con.execute(f"COPY {temp_table} TO '{output_path}' (FORMAT PARQUET)")
+        count = self.con.execute(f"SELECT COUNT(*) FROM {temp_table}").fetchone()[0]
+        print(f"Saved {count} {split_name} positive interactions to {output_path}")
+
+    def _compute_user_avg_embeddings(self, split_name: str, output_path: str):
+        """
+        Compute per-user average audio embedding over distinct positive items in a split.
+        """
+        split_path = self.split_paths[split_name]
+        temp_table = f"{split_name}_user_pos_emb"
+        query = f"""
+            CREATE OR REPLACE TEMPORARY TABLE {temp_table} AS
+            SELECT user_id, item_id, ANY_VALUE(emb.normalized_embed) AS normalized_embed
+            FROM read_parquet('{split_path}') e
+            JOIN read_parquet('{self.embeddings_path}') emb ON e.item_id = emb.item_id
+            WHERE e.event_type IN ('listen', 'like', 'undislike')
+            GROUP BY user_id, item_id
+        """
+        self.con.execute(query)
+
+        df = self.con.execute(f"SELECT user_id, normalized_embed FROM {temp_table}").fetch_df()
+
+        avg_embs = []
+        for user_id, group in df.groupby("user_id"):
+            embs_list = list(group["normalized_embed"])
+            embs_array = np.vstack(embs_list)  # Stack to [num_items, dim]
+            avg_emb = np.mean(embs_array, axis=0)
+            avg_embs.append({"user_id": int(user_id), "avg_embed": avg_emb.tolist()})
+
+        avg_df = pd.DataFrame(avg_embs).sort_values("user_id")
+        avg_df.to_parquet(output_path, index=False)
+        print(f"Saved {len(avg_embs)} {split_name} user average embeddings to {output_path}")
+
+    def prepare_baselines(self, top_popular_k: int = 1000):
+        """
+        Prepare all necessary files for baseline models.
+        """
+        self._save_filtered_user_ids(Config.paths.filtered_user_ids)
+        self._save_filtered_song_ids(Config.paths.filtered_song_ids)
+        self._save_filtered_audio_embeddings(Config.paths.filtered_audio_embed_file)
+        self._save_most_popular_songs(top_popular_k, Config.paths.popular_song_ids)
+        self._save_positive_interactions('train', )
+        self._compute_user_avg_embeddings('train', )
+        self._compute_user_avg_embeddings('val',)
+
 

@@ -22,6 +22,8 @@ def objective(trial):
     neutral_neg_weight = trial.suggest_float("neutral_neg_weight", 0.1, 0.5)
     num_layers = trial.suggest_int("num_layers", 1, 10)
 
+    # TODO add novelty parameters to the search?
+
     config.gnn.lr = lr
     config.gnn.batch_size = batch_size
     config.gnn.neg_samples_per_pos = neg_samples_per_pos
