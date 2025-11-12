@@ -4,8 +4,10 @@ from torch.utils.data import Dataset, DataLoader
 import numpy as np
 import torch.nn.functional as F
 from tqdm import tqdm
+import json
 from torch_geometric.utils import subgraph
 from GNN_model.GNN_class import LightGCN
+from GNN_model.eval_GNN import GNNEvaluator
 from config import Config
 
 
@@ -114,6 +116,7 @@ class GNNTrainer:
     """
 
     def __init__(self, model: LightGCN, train_graph, config: Config):
+        self.config = config
         self.device = config.gnn.device
         self.model = model.to(self.device)
         self.train_graph = train_graph
@@ -222,12 +225,14 @@ class GNNTrainer:
                 # **Pure SGD update**
                 param.data.add_(grad, alpha=-param_lr)
 
-    def train(self):
+    def train(self, trial = False):
         print(f">>> starting training")
         os.makedirs(os.path.dirname(self.save_path), exist_ok=True)
         self.model.to(self.device)
 
         best_loss = float('inf')
+        best_ndcg = 0.0
+        best_metrics = None
         patience = 0
         max_patience = 5
 
@@ -342,21 +347,34 @@ class GNNTrainer:
 
             print(f"Epoch {epoch} | Loss: {avg_loss:.6f} | Avg grad: {avg_grad:.4f}")
 
-            # Save best model
-            # if avg_loss < best_loss:
-            #     improvement = best_loss - avg_loss
-            #     best_loss = avg_loss
-            #     patience = 0
-            #     torch.save(self.model.state_dict(), self.save_path)
-            #     print(f"✓ Best model saved (↓{improvement:.6f})")
-            # else:
-            #     patience += 1
-            #     print(f"No improvement ({patience}/{max_patience})")
-            #     if patience >= max_patience:
-            #         print(f"Early stopping at epoch {epoch}")
-            #         break
+            if not trial:
+                # Save best model
+                self.model.eval()
+                val_evaluator = GNNEvaluator(self.model, self.train_graph, "val", self.config)
+                val_metrics = val_evaluator.evaluate()
+                cur_ndcg = val_metrics['ndcg@k']
+
+                if cur_ndcg > best_ndcg:
+                    improvement = cur_ndcg - best_ndcg
+                    best_ndcg = cur_ndcg
+                    best_metrics = val_metrics
+                    patience = 0
+                    torch.save(self.model.state_dict(), self.save_path)
+                    print(f"✓ Best model saved ({improvement:.6f})")
+
+                else:
+                    patience += 1
+                    print(f"No improvement ({patience}/{max_patience})")
+                    if patience >= max_patience:
+                        print(f"Early stopping at epoch {epoch}")
+                        break
 
         print(f"\n >>> finished training")
-        # print(f"Best loss: {best_loss:.6f}")
-        torch.save(self.model.state_dict(), self.save_path)
-        print(f"Model saved to {self.save_path}")
+
+        # TODO: fix to be written pretty in the txt file
+        if not trial:
+            print(f"Best NDCG@K: {best_ndcg:.6f}")
+            with open(self.config.paths.val_eval, "w") as f:
+                json.dump(best_metrics, f, indent=4)
+
+            print(f"Model saved to {self.save_path}")

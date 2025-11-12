@@ -32,6 +32,7 @@ def main():
     processor.filter_events()
     # processor.filter_events(output_path=config.paths.interactions_file)
     processor.split_data()
+    processor.prepare_baselines()
 
     print('\n---------- EDGE ASSEMBLER ----------')
     aggregator = EdgeAssembler(con, config)

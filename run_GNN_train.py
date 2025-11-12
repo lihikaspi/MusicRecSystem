@@ -3,6 +3,8 @@ import torch.nn.functional as F
 import os
 import numpy as np
 import gc
+import json
+from torch_geometric.data import HeteroData
 from GNN_model.train_GNN import GNNTrainer
 from GNN_model.GNN_class import LightGCN
 from GNN_model.eval_GNN import GNNEvaluator
@@ -15,7 +17,8 @@ def check_prev_files():
     check for the files created in the previous stage.
     if at least one file is missing raises FileNotFoundError
     """
-    needed = [config.paths.audio_embeddings_file, config.paths.train_graph_file, config.paths.test_set_file]
+    needed = [config.paths.audio_embeddings_file, config.paths.train_graph_file,
+              config.paths.test_scores_file]
     fail = False
     for file in needed:
         if not os.path.exists(file):
@@ -27,12 +30,11 @@ def check_prev_files():
         print("All needed files are present! starting GNN training ... ")
 
 
-def test_evaluation(model: LightGCN, train_graph, k_hit: int):
+def test_evaluation(model: LightGCN, train_graph: HeteroData):
     print("evaluating best model on test set...")
-    # Evaluate using the test parquet file
-    # TODO: fix to current evaluator
-    test_evaluator = GNNEvaluator(model, train_graph, config.gnn.device, config.gnn.eval_event_map)
-    test_metrics = test_evaluator.evaluate(config.paths.test_set_file, k=k_hit)
+    test_evaluator = GNNEvaluator(model, train_graph, "test", config)
+    test_metrics = test_evaluator.evaluate()
+    k_hit = config.gnn.k_hit
 
     print(f"Test set metrics @K={k_hit}:")
     print(f"  NDCG@{k_hit}: {test_metrics['ndcg@k']:.4f}")
@@ -40,9 +42,14 @@ def test_evaluation(model: LightGCN, train_graph, k_hit: int):
     print(f"  Hit@{k_hit} (like+listen): {test_metrics['hit_like_listen@k']:.4f}")
     print(f"  AUC: {test_metrics['auc']:.4f}")
     print(f"  Dislike-FPR@{k_hit}: {test_metrics['dislike_fpr@k']:.4f}")
+    print(f"  Novelty@{k_hit}: {test_metrics['novelty@k']:.4f}")
+
+    # TODO: fix to be written pretty in the txt file
+    with open(config.paths.test_eval, "w") as f:
+        json.dump(test_metrics, f, indent=4)
 
 
-def save_final_embeddings(model: LightGCN, user_embed_path, song_embed_path):
+def save_final_embeddings(model: LightGCN, user_embed_path: str, song_embed_path: str):
     """
     Save embeddings with memory-efficient batched computation
     """
@@ -116,21 +123,21 @@ def main():
     train_graph = torch.load(config.paths.train_graph_file)
 
     model = LightGCN(train_graph, config)
-    #
+
     # audio_scale, metadata_scale = diagnose_embedding_scales(model)
     # model.audio_scale = audio_scale
     # model.metadata_scale = metadata_scale
-    #
-    # trainer = GNNTrainer(model, train_graph, config)
-    # trainer.train()
-    #
-    # model = trainer.model
-    # del trainer
-    # gc.collect()
-    # torch.cuda.empty_cache()
+
+    trainer = GNNTrainer(model, train_graph, config)
+    trainer.train()
+
+    model = trainer.model
+    del trainer
+    gc.collect()
+    torch.cuda.empty_cache()
 
     model.load_state_dict(torch.load(config.paths.trained_gnn, map_location=config.gnn.device))
-    # test_evaluation(model, train_graph, config.gnn.k_hit)
+    test_evaluation(model, train_graph)
 
     save_final_embeddings(model, config.paths.user_embeddings_gnn, config.paths.song_embeddings_gnn)
 

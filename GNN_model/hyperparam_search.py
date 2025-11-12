@@ -1,18 +1,20 @@
 import torch
 import optuna
 import json
+from torch_geometric.data import HeteroData
 from GNN_model.train_GNN import GNNTrainer
 from GNN_model.GNN_class import LightGCN
 from GNN_model.eval_GNN import GNNEvaluator
 from config import config
 
-def test_evaluation(model: LightGCN, train_graph, k_hit: int = 10):
-    print("evaluating best model...")
-    # Evaluate using the test parquet file
-    test_evaluator = GNNEvaluator(model, train_graph, config.gnn.device, config.gnn.eval_event_map)
-    test_metrics = test_evaluator.evaluate(config.paths.test_set_file, k=k_hit)
 
-    return test_metrics
+def test_evaluation(model: LightGCN, train_graph: HeteroData):
+    test_evaluator = GNNEvaluator(model, train_graph, "test", config)
+    test_metrics = test_evaluator.evaluate()
+
+    # TODO: decide on main metric
+    return test_metrics['ndcg@k']
+
 
 def objective(trial):
     lr = trial.suggest_loguniform("lr",1e-3,1e-1)
@@ -21,8 +23,6 @@ def objective(trial):
     listen_weight = trial.suggest_float("listen_weight", 0.5, 0.9)
     neutral_neg_weight = trial.suggest_float("neutral_neg_weight", 0.1, 0.5)
     num_layers = trial.suggest_int("num_layers", 1, 10)
-
-    # TODO add novelty parameters to the search?
 
     config.gnn.lr = lr
     config.gnn.batch_size = batch_size
@@ -39,8 +39,8 @@ def objective(trial):
     trainer = GNNTrainer(model, train_graph, config)
 
     # Optional: short training for hyperparameter search
-    trainer.num_epochs = 1
-    trainer.train()
+    trainer.num_epochs = 8
+    trainer.train(trial=True)
 
     metric = test_evaluation(model, train_graph)  # returns the rank-based metric you care about
 

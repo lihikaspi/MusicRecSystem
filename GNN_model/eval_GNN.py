@@ -1,33 +1,36 @@
 import torch
-import pyarrow.parquet as pq
 import pandas as pd
 import numpy as np
 from sklearn.metrics import roc_auc_score
 from typing import Dict
 from torch_geometric.data import HeteroData
+from config import Config
 
 
 class GNNEvaluator:
-    def __init__(self, model: torch.nn.Module, graph: HeteroData, device, event_map: dict):
+    def __init__(self, model: torch.nn.Module, graph: HeteroData, eval_set: str, config: Config):
         """
         Args:
             model: trained GNN model
             graph: PyG HeteroData graph (needed for full user/item embeddings)
             device: cpu or cuda
         """
-        self.model = model.to(device)
+        self.device = config.gnn.device
+        self.model = model.to(self.device)
         self.graph = graph
-        self.device = device
-        self.event_map = event_map
+        self.scores_path = getattr(config.paths, f"{eval_set}_scores_file")
+        self.top_k = config.gnn.k_hit
 
         # Cache for embeddings
         self._cached_embeddings = None
 
-    def _load_and_process(self, scores_path: str) -> pd.DataFrame:
+
+    def _load_and_process(self) -> pd.DataFrame:
         """Load the pre-computed scores"""
-        df = pd.read_parquet(scores_path)
+        df = pd.read_parquet(self.scores_path)
         df = df.rename(columns={"user_id": "user_idx", "item_id": "item_idx"})
         return df
+
 
     def _get_embeddings(self):
         """
@@ -40,12 +43,14 @@ class GNNEvaluator:
                 self._cached_embeddings = (user_emb.cpu(), item_emb.cpu())
         return self._cached_embeddings
 
-    def evaluate(self, scores_path: str, k: int = 10) -> Dict[str, float]:
+
+    def evaluate(self) -> Dict[str, float]:
         """
         Same interface as before, now using **adjusted_score** as ground-truth relevance.
         Also returns a new metric: **novelty@k** (fraction of top-k that are unseen).
         """
-        df = self._load_and_process(scores_path)
+        k = self.top_k
+        df = self._load_and_process()
         user_emb, item_emb = self._get_embeddings()
 
         metrics = {

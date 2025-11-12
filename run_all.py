@@ -3,7 +3,7 @@ import argparse
 import sys
 from config import config
 
-def run_stage(stage_name, stage_file):
+def run_stage(stage_name: str, stage_file: str):
     print(f"\n>>> Running stage: {stage_name} ({stage_file}) ...")
     subprocess.run([sys.executable, stage_file], check=True)
     print(f">>> Finished stage: {stage_name}\n")

@@ -14,13 +14,25 @@ class EventProcessor:
             config: global Config object
         """
         self.con = con
+
         self.embeddings_path = config.paths.audio_embeddings_file
         self.multi_event_path = config.paths.raw_multi_event_file
+
         self.low_threshold = config.preprocessing.low_interaction_threshold
         self.high_threshold = config.preprocessing.high_interaction_threshold
+
         self.split_ratios = config.preprocessing.split_ratios
         self.split_paths = config.paths.split_paths
+
         self.cold_start_songs_path = config.paths.cold_start_songs_file
+        self.filtered_audio_embed_file = config.paths.filtered_audio_embed_file
+        self.filtered_user_embed_file = config.paths.filtered_user_embed_file
+        self.filtered_song_ids = config.paths.filtered_song_ids
+        self.filtered_user_ids = config.paths.filtered_user_ids
+        self.popular_song_ids = config.paths.popular_song_ids
+        self.positive_interactions_file = config.paths.positive_interactions_file
+
+        self.top_k = config.gnn.top_popular_k
 
 
     def _compute_active_users(self):
@@ -79,7 +91,7 @@ class EventProcessor:
         print("Created user indices")
 
 
-    def filter_events(self, low_threshold: int = None, high_threshold: int = None, output_path:str = None ):
+    def filter_events(self, low_threshold: int = None, high_threshold: int = None, output_path: str = None ):
         """
         runs the multi-event filtering pipeline:
             1. find active users with more interactions than the given threshold
@@ -189,6 +201,8 @@ class EventProcessor:
         self._compute_relevance_scores()
         self._save_cold_start_songs()
 
+
+    # TODO: split to smaller functions
     def _compute_relevance_scores(self):
         """
         1. Base relevance  – weighted sum of all events (listen, like, …)
@@ -301,16 +315,19 @@ class EventProcessor:
             """
             self.con.execute(final_query)
 
-
             out_path = Config.paths.val_scores_file if split == "val" else Config.paths.test_scores_file
             self.con.execute(
-                f"COPY (SELECT user_id, item_id, base_relevance, adjusted_score, total_events, seen_in_train, train_play_cnt FROM {split}_final) TO '{out_path}' (FORMAT PARQUET)")
+                f"COPY (SELECT user_id, item_id, base_relevance, adjusted_score, total_events, seen_in_train, train_play_cnt "
+                f"FROM {split}_final) TO '{out_path}' (FORMAT PARQUET)")
             print(f"{split.capitalize()} scores (base + adjusted) saved → {out_path}")
 
-    def _save_filtered_user_ids(self, output_path: str):
+
+    def _save_filtered_user_ids(self):
         """
         Save sorted list of all filtered/encoded user IDs (0 to num_users-1) as npy.
         """
+        output_path = self.filtered_user_ids
+
         query = f"""
             SELECT DISTINCT user_id
             FROM read_parquet('{self.split_paths['train']}')
@@ -321,10 +338,13 @@ class EventProcessor:
         np.save(output_path, user_ids)
         print(f"Saved {len(user_ids)} filtered user IDs to {output_path}")
 
-    def _save_filtered_song_ids(self, output_path: str):
+
+    def _save_filtered_song_ids(self):
         """
         Save sorted list of all unique filtered song IDs (global item_id) as npy.
         """
+        output_path = self.filtered_song_ids
+
         query = f"""
             WITH unique_items AS (
                 SELECT DISTINCT item_id FROM read_parquet('{self.split_paths['train']}')
@@ -340,10 +360,13 @@ class EventProcessor:
         np.save(output_path, song_ids)
         print(f"Saved {len(song_ids)} filtered song IDs to {output_path}")
 
-    def _save_filtered_audio_embeddings(self, output_path: str):
+
+    def _save_filtered_audio_embeddings(self):
         """
         Save audio embeddings for all filtered songs as parquet (item_id, normalized_embed).
         """
+        output_path = self.filtered_audio_embed_file
+
         query = f"""
             CREATE OR REPLACE TEMPORARY TABLE filtered_songs_emb AS
             WITH unique_items AS (
@@ -363,27 +386,34 @@ class EventProcessor:
         print(
             f"Saved filtered audio embeddings ({self.con.execute('SELECT COUNT(*) FROM filtered_songs_emb').fetchone()[0]} songs) to {output_path}")
 
-    def _save_most_popular_songs(self, top_k: int, output_path: str):
+
+    def _save_most_popular_songs(self):
         """
         Save top-K most popular song IDs (based on count of positive interactions in train) as npy.
         """
+        output_path = self.popular_song_ids
+
         query = f"""
             SELECT item_id
             FROM read_parquet('{self.split_paths['train']}') e
             WHERE e.event_type IN ('listen', 'like', 'undislike')
             GROUP BY item_id
             ORDER BY COUNT(*) DESC
-            LIMIT {top_k}
+            LIMIT {self.top_k}
         """
         df = self.con.execute(query).fetch_df()
         popular_ids = df['item_id'].to_numpy(dtype=np.int64)
         np.save(output_path, popular_ids)
-        print(f"Saved top-{top_k} popular song IDs to {output_path}")
+        print(f"Saved top-{self.top_k} popular song IDs to {output_path}")
 
-    def _save_positive_interactions(self, split_name: str, output_path: str):
+
+    def _save_positive_interactions(self):
         """
         Save unique positive user-item pairs for a split as parquet (user_id, item_id).
         """
+        output_path = self.positive_interactions_file
+        split_name = 'train'
+
         split_path = self.split_paths[split_name]
         temp_table = f"{split_name}_positive_interactions"
         query = f"""
@@ -398,10 +428,14 @@ class EventProcessor:
         count = self.con.execute(f"SELECT COUNT(*) FROM {temp_table}").fetchone()[0]
         print(f"Saved {count} {split_name} positive interactions to {output_path}")
 
-    def _compute_user_avg_embeddings(self, split_name: str, output_path: str):
+
+    def _compute_user_avg_embeddings(self):
         """
         Compute per-user average audio embedding over distinct positive items in a split.
         """
+        output_path = self.filtered_user_embed_file
+        split_name = 'train'
+
         split_path = self.split_paths[split_name]
         temp_table = f"{split_name}_user_pos_emb"
         query = f"""
@@ -427,16 +461,15 @@ class EventProcessor:
         avg_df.to_parquet(output_path, index=False)
         print(f"Saved {len(avg_embs)} {split_name} user average embeddings to {output_path}")
 
-    def prepare_baselines(self, top_popular_k: int = 1000):
+
+    def prepare_baselines(self):
         """
         Prepare all necessary files for baseline models.
         """
-        self._save_filtered_user_ids(Config.paths.filtered_user_ids)
-        self._save_filtered_song_ids(Config.paths.filtered_song_ids)
-        self._save_filtered_audio_embeddings(Config.paths.filtered_audio_embed_file)
-        self._save_most_popular_songs(top_popular_k, Config.paths.popular_song_ids)
-        self._save_positive_interactions('train', )
-        self._compute_user_avg_embeddings('train', )
-        self._compute_user_avg_embeddings('val',)
-
+        self._save_filtered_user_ids()
+        self._save_filtered_song_ids()
+        self._save_filtered_audio_embeddings()
+        self._save_most_popular_songs()
+        self._save_positive_interactions()
+        self._compute_user_avg_embeddings()
 

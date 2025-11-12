@@ -66,6 +66,7 @@ class PathsConfig:
     filtered_song_ids: str = field(init=False)
     filtered_user_ids: str = field(init=False)
     popular_song_ids: str = field(init=False)
+    positive_interactions_file: str = field(init=False)
     train_edges_file: str = field(init=False)
     train_graph_file: str = field(init=False)
     test_graph_file: str = field(init=False)
@@ -84,6 +85,9 @@ class PathsConfig:
     gnn_song_ids: str = field(init=False)
     content_index: str = field(init=False)
     content_song_ids: str = field(init=False)
+
+    test_eval: str = field(init=False)
+    val_eval: str = field(init=False)
 
     def __post_init__(self):
         os.makedirs(self.processed_dir, exist_ok=True)
@@ -113,15 +117,19 @@ class PathsConfig:
         self.train_set_file = f"{self.processed_dir}/train.parquet"
         self.val_set_file = f"{self.processed_dir}/val.parquet"
         self.test_set_file = f"{self.processed_dir}/test.parquet"
+
         self.cold_start_songs_file = f"{self.processed_dir}/cold_start_songs.parquet"
         self.filtered_audio_embed_file = f"{self.processed_dir}/filtered_audio_embed.parquet"
         self.filtered_user_embed_file = f"{self.processed_dir}/filtered_user_embed.parquet"
         self.filtered_song_ids = f"{self.processed_dir}/filtered_song_ids.npy"
         self.filtered_user_ids = f"{self.processed_dir}/filtered_user_ids.npy"
         self.popular_song_ids = f"{self.processed_dir}/popular_song_ids.npy"
+        self.positive_interactions_file = f"{self.processed_dir}/positive_interactions.parquet"
+
         self.train_edges_file = f"{self.processed_dir}/train_edges.parquet"
         self.train_graph_file = f"{self.processed_dir}/train_graph.pt"
         self.test_graph_file = f"{self.processed_dir}/test_graph.pt"
+
         self.val_scores_file = f"{self.processed_dir}/val_scores.parquet"
         self.test_scores_file = f"{self.processed_dir}/test_scores.parquet"
 
@@ -148,6 +156,9 @@ class PathsConfig:
         self.gnn_song_ids = f"{self.ann_models_dir}/gnn_song_ids.npy"
         self.content_index = f"{self.ann_models_dir}/content_index.faiss"
         self.content_song_ids = f"{self.ann_models_dir}/content_song_ids.npy"
+
+        self.test_eval = f"{self.eval_dir}/gnn_test_eval.txt"
+        self.val_eval = f"{self.eval_dir}/gnn_val_eval.txt"
 
 
 # -------------------
@@ -220,14 +231,7 @@ class GNNConfig:
     metadata_scale: float = 0.418
 
     k_hit: int = 10
-
-    eval_event_map: Dict[str, int] = field(default_factory=lambda: {
-        "like": 2,
-        "listen": 1,
-        "unlike": 0,
-        "dislike": -1,
-        "undislike": 0
-    })
+    top_popular_k: int = 1000
 
 
 # -------------------

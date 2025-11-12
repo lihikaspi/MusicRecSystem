@@ -17,7 +17,7 @@ def check_prev_files():
               config.paths.cold_start_songs_file, config.paths.filtered_audio_embed_file,
               config.paths.filtered_user_embed_file, config.paths.filtered_songs_id,
               config.paths.filtered_user_ids, config.paths.popular_song_ids,
-              config.paths.interactions_file]
+              config.paths.positive_interactions_file]
     fail = False
     for file in needed:
       if not os.path.exists(file):
@@ -65,7 +65,7 @@ def recommend_cf(top_k=10, top_sim_items=50):
     """
     # TODO: fix according to interactions file
     # ---- Step 1: Load interactions ----
-    interactions = pd.read_parquet(config.paths.interactions_parquet)
+    interactions = pd.read_parquet(config.paths.positive_interactions_file)
     # columns: ['user_id', 'song_id']
 
     # ---- Step 2: Map IDs to indices ----
