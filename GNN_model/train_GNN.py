@@ -380,7 +380,7 @@ class GNNTrainer:
                         print(f"Early stopping at epoch {epoch}")
                         break
 
-        print(f"\n >>> finished training")
+        print(f"\n>>> finished training")
 
         if not trial:
             print(f"Best NDCG@K: {best_ndcg:.6f}")

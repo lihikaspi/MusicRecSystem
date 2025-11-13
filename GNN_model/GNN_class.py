@@ -113,7 +113,7 @@ class LightGCN(nn.Module):
         self.edge_mlp = EdgeWeightMLP(config)
         self.convs = nn.ModuleList([LGConv() for _ in range(self.num_layers)])
 
-        print_model_info(self)
+        # print_model_info(self)
 
         print(">>> finished GNN init")
 

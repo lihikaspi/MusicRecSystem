@@ -12,19 +12,34 @@ def test_evaluation(model: LightGCN, train_graph: HeteroData):
     test_evaluator = GNNEvaluator(model, train_graph, "test", config)
     test_metrics = test_evaluator.evaluate()
 
+    print(f"trial NDCG@K: {test_metrics['ndcg@k']}")
+
     return test_metrics['ndcg@k']
 
 
 def objective(trial):
-    lr = trial.suggest_loguniform("lr",1e-3,1e-1)
-    batch_size = trial.suggest_categorical("batch_size", [32, 64])
-    neg_samples_per_pos = trial.suggest_int("neg_samples_per_pos", 1, 10)
-    listen_weight = trial.suggest_float("listen_weight", 0.5, 0.9)
+    # --- CORRECTED RANGES ---
+
+    # lr: Range shrunk. 0.1 is very high for this type of model.
+    # Centered around your default of 0.01.
+    lr = trial.suggest_float("lr", 1e-4, 1e-1, log=True)
+
+    # neg_samples_per_pos: Range is good, centered on default of 5.
+    neg_samples_per_pos = trial.suggest_int("neg_samples_per_pos", 2, 8)
+
+    # listen_weight: Range extended to 1.0 to test "no extra weight".
+    listen_weight = trial.suggest_float("listen_weight", 0.5, 1.0)
+
+    # neutral_neg_weight: Range is good, centered on default of 0.3.
     neutral_neg_weight = trial.suggest_float("neutral_neg_weight", 0.1, 0.5)
-    num_layers = trial.suggest_int("num_layers", 1, 10)
+
+    # num_layers: Range shrunk significantly. LightGCN over-smooths.
+    # Centered around your default of 3.
+    num_layers = trial.suggest_int("num_layers", 2, 5)
+
+    # --- END CORRECTIONS ---
 
     config.gnn.lr = lr
-    config.gnn.batch_size = batch_size
     config.gnn.neg_samples_per_pos = neg_samples_per_pos
     config.gnn.listen_weight = listen_weight
     config.gnn.neutral_neg_weight = neutral_neg_weight
