@@ -25,22 +25,41 @@ class GNNEvaluator:
         self._cached_embeddings = None
         self._orig_id_to_graph_idx = None
 
-
     def _load_and_process(self) -> pd.DataFrame:
-        """Load the pre-computed scores"""
+        """Load the pre-computed scores AND vectorize the ID mapping."""
         df = pd.read_parquet(self.scores_path)
         df = df.rename(columns={"user_id": "user_idx", "item_id": "item_idx"})
-        return df
 
+        # --- KEY CHANGE 1: VECTORIZED ID MAPPING ---
+        # Get the mapper (this ensures embeddings are cached first)
+        self._get_embeddings()
+        mapper = self._orig_id_to_graph_idx
+
+        # Map all item IDs to graph indices at once.
+        df['graph_idx'] = df['item_idx'].map(mapper)
+
+        # Drop rows for items that are not in our model's embedding table
+        df = df.dropna(subset=['graph_idx'])
+
+        # Convert to int for numpy indexing
+        df['graph_idx'] = df['graph_idx'].astype(np.int64)
+        # -------------------------------------------
+
+        return df
 
     def _get_embeddings(self):
         """
         Run full-graph propagation once and cache embeddings.
+
+        --- THIS IS YOUR ORIGINAL OOM-SAFE FUNCTION ---
+        It correctly uses forward_cpu() to avoid GPU OOM.
         """
         if self._cached_embeddings is None:
             self.model.eval()
             with torch.no_grad():
+                # Use the CPU forward pass
                 user_emb, item_emb, _ = self.model.forward_cpu()
+                # Cache them on the CPU
                 self._cached_embeddings = (user_emb.cpu(), item_emb.cpu())
 
             if self._orig_id_to_graph_idx is None:
@@ -56,7 +75,6 @@ class GNNEvaluator:
 
         return self._cached_embeddings
 
-
     def evaluate(self) -> Dict[str, float]:
         """
         Same interface as before, now using **adjusted_score** as ground-truth relevance.
@@ -64,8 +82,13 @@ class GNNEvaluator:
         """
         print(">>> starting evaluation")
         k = self.top_k
+
+        # This now also maps the IDs
         df = self._load_and_process()
+
+        # These embeddings are on the CPU
         user_emb, item_emb = self._get_embeddings()
+
         mapper = self._orig_id_to_graph_idx
 
         metrics = {
@@ -78,6 +101,8 @@ class GNNEvaluator:
         }
 
         for uid, group in df.groupby('user_idx'):
+            # This is the unavoidable CPU dot product.
+            # It's still the fastest way given your OOM constraint.
             u = user_emb[uid:uid + 1]
             pred = torch.mm(u, item_emb.T).squeeze(0).cpu().numpy()
 
@@ -86,23 +111,23 @@ class GNNEvaluator:
             topk_set = set(topk_idx)
 
             # ---- ground-truth vectors ----
-            gt_orig_ids = group["item_idx"].values
+
+            # --- KEY CHANGE 1 (Continued): USE PRE-MAPPED INDICES ---
+            # We already did the slow mapping. Just get the values.
+            gt_items = group["graph_idx"].values
             gt_adj = group["adjusted_score"].values
             gt_seen = group["seen_in_train"].values.astype(bool)
 
-            valid_gt_items_graph_idx = []  # Mapped graph indices
-            valid_gt_adj = []  # Corresponding scores
-
-            for orig_id, adj_score in zip(gt_orig_ids, gt_adj):
-                graph_idx = mapper.get(orig_id)  # Use .get() for safety
-                if graph_idx is not None:
-                    # Only keep items that exist in our model
-                    valid_gt_items_graph_idx.append(graph_idx)
-                    valid_gt_adj.append(adj_score)
-
-            # Convert to numpy arrays
-            gt_items = np.array(valid_gt_items_graph_idx, dtype=np.int64)
-            gt_adj = np.array(valid_gt_adj, dtype=np.float64)
+            # THIS ENTIRE SLOW BLOCK IS NO LONGER NEEDED
+            # gt_orig_ids = group["item_idx"].values
+            # ...
+            # valid_gt_items_graph_idx = []
+            # ...
+            # for orig_id, adj_score in zip(gt_orig_ids, gt_adj):
+            # ...
+            # gt_items = np.array(valid_gt_items_graph_idx, dtype=np.int64)
+            # gt_adj = np.array(valid_gt_adj, dtype=np.float64)
+            # --------------------------------------------------------
 
             # full relevance vector (size = #items)
             relevance = np.zeros(len(pred), dtype=float)
@@ -125,12 +150,27 @@ class GNNEvaluator:
             metrics["hit_like_listen@k"].append(float(len(set(pos_items) & topk_set) > 0))
 
             # ----- AUC (pos vs neg) -----
-            pos_mask = relevance > 0
-            neg_mask = relevance < 0
-            if pos_mask.any() and neg_mask.any():
-                y_true = np.concatenate([np.ones(pos_mask.sum()), np.zeros(neg_mask.sum())])
-                y_score = np.concatenate([pred[pos_mask], pred[neg_mask]])
+
+            # --- KEY CHANGE 2: OPTIMIZED AUC ---
+            # Get the small index arrays of pos/neg items
+            pos_items_auc = gt_items[gt_adj > 0]
+            neg_items_auc = gt_items[gt_adj < 0]
+
+            # Only proceed if we have both
+            if len(pos_items_auc) > 0 and len(neg_items_auc) > 0:
+                y_true = np.concatenate([
+                    np.ones(len(pos_items_auc)),
+                    np.zeros(len(neg_items_auc))
+                ])
+
+                # Slice the 'pred' vector using *only* the relevant indices
+                y_score = np.concatenate([
+                    pred[pos_items_auc],
+                    pred[neg_items_auc]
+                ])
+
                 metrics["auc"].append(roc_auc_score(y_true, y_score))
+            # ---------------------------------
 
             # ----- Dislike FPR@k -----
             dislike_items = gt_items[gt_adj < 0]

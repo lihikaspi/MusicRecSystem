@@ -371,7 +371,7 @@ class GNNTrainer:
                     best_metrics = val_metrics
                     patience = 0
                     torch.save(self.model.state_dict(), self.save_path)
-                    print(f"✓ Best model saved ({improvement:.6f})")
+                    print(f"> Best model saved ({improvement:.6f})")
 
                 else:
                     patience += 1

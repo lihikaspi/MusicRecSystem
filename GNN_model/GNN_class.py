@@ -74,7 +74,8 @@ class LightGCN(nn.Module):
 
         # **FIX 1: Initialize embeddings with smaller scale**
         self.user_emb = nn.Embedding(self.num_users, self.embed_dim)
-        nn.init.normal_(self.user_emb.weight, mean=0, std=0.01)
+        # nn.init.normal_(self.user_emb.weight, mean=0, std=0.01)
+        nn.init.xavier_uniform_(self.user_emb.weight)
 
         # Keep on CPU, move to GPU only when needed
         self.register_buffer('item_audio_emb', data['item'].x.cpu())

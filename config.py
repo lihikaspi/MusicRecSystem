@@ -212,9 +212,9 @@ class GNNConfig:
     edge_mlp_input_dim: int = 4
 
     listen_weight: float = 0.8
-    neutral_neg_weight: float = 0.3
+    neutral_neg_weight: float = 0.5
 
-    lr: float = 0.01
+    lr: float = 0.001
     lr_decay: float = 0.98
     momentum: float = 0.0
     max_grad_norm: float = 1.0
