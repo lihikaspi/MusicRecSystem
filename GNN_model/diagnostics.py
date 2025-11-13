@@ -37,8 +37,8 @@ def diagnose_embedding_scales(model, sample_items=100):
         print(f"\nRatio (audio/metadata): {audio_norm / metadata_norm:.2f}x")
 
         # Recommended scales
-        target_audio = 0.3  # We want audio to contribute ~30%
-        target_metadata = 0.7  # metadata to contribute ~70%
+        target_audio = 0.5  # We want audio to contribute ~30%
+        target_metadata = 0.5  # metadata to contribute ~70%
 
         rec_audio_scale = target_audio / audio_norm
         rec_metadata_scale = target_metadata / metadata_norm

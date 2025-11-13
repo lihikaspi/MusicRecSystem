@@ -5,7 +5,6 @@ from sklearn.metrics import roc_auc_score
 from typing import Dict
 from torch_geometric.data import HeteroData
 from config import Config
-from tqdm import tqdm
 
 
 class GNNEvaluator:
@@ -43,7 +42,7 @@ class GNNEvaluator:
         self.ground_truth = {}
 
         # Group by user_idx
-        for uid, group in tqdm(df.groupby('user_idx'), desc="Processing GT"):
+        for uid, group in df.groupby('user_idx'):  # <-- REMOVED tqdm
             self.ground_truth[uid] = {
                 "item_idx": group["item_idx"].values,  # Original item IDs
                 "adjusted_score": group["adjusted_score"].values,
@@ -90,7 +89,7 @@ class GNNEvaluator:
         in the ground truth dict to the model's graph indices.
         This is done once to avoid repeated .map() calls.
         """
-        for uid in tqdm(self.eval_user_indices, desc="Mapping GT"):
+        for uid in self.eval_user_indices:  # <-- REMOVED tqdm
             gt = self.ground_truth[uid]
             orig_ids = gt["item_idx"]
 
@@ -136,7 +135,7 @@ class GNNEvaluator:
         }
 
         # 4. Process users in batches
-        for i in tqdm(range(0, len(self.eval_user_indices), self.eval_batch_size), desc="Evaluating batches"):
+        for i in range(0, len(self.eval_user_indices), self.eval_batch_size):  # <-- REMOVED tqdm
             # Get user indices for this batch
             batch_user_indices = self.eval_user_indices[i: i + self.eval_batch_size]
 

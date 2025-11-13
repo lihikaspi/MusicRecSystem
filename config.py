@@ -212,28 +212,28 @@ class GNNConfig:
     edge_mlp_input_dim: int = 4
 
     listen_weight: float = 0.8
-    neutral_neg_weight: float = 0.5
+    neutral_neg_weight: float = 0.1
 
-    lr: float = 0.05
+    lr: float = 0.01
     lr_decay: float = 0.98
     momentum: float = 0.0
     max_grad_norm: float = 1.0
     init_std: float = 0.005
 
     num_epochs: int = 50
-    batch_size: int = 32
+    batch_size: int = 16
     weight_decay: float = 1e-5
     num_workers: int = 16
     eval_every: int = 5
     neg_samples_per_pos: int = 5
-    accum_steps: int = 4
+    accum_steps: int = 8
     audio_scale: float = 0.3
     metadata_scale: float = 0.418
 
     eval_batch_size: int = 512
 
     k_hit: int = 10
-    top_popular_k: int = 1000
+    top_popular_k: int = 100
 
 
 # -------------------

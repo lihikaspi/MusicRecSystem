@@ -5,6 +5,7 @@ import numpy as np
 import torch.nn.functional as F
 from tqdm import tqdm
 import json
+import math
 from torch_geometric.utils import subgraph
 from GNN_model.GNN_class import LightGCN
 from GNN_model.eval_GNN import GNNEvaluator
@@ -182,20 +183,37 @@ class GNNTrainer:
         self.max_grad_norm = config.gnn.max_grad_norm
 
         self.step_count = 0
-        self.warmup_steps = 100
+        self.warmup_steps = len(self.loader)
         self.accum_steps = config.gnn.accum_steps
+
+        # In GNN_model/train_GNN.py
 
     def _get_lr(self, epoch):
         """
-        Learning rate schedule with warmup and decay.
+        Learning rate schedule with warmup and CYCLICAL decay (Cosine Annealing).
         """
+        # --- WARMUP (same as before) ---
         if self.step_count == 0:
             return self.lr_base * (1 / self.warmup_steps)
-
         if self.step_count < self.warmup_steps:
             return self.lr_base * (self.step_count / self.warmup_steps)
 
-        return self.lr_base * (self.lr_decay ** (epoch - (self.warmup_steps / len(self.loader))))
+        # --- CYCLICAL DECAY (NEW) ---
+
+        # Define your cycle length (e.g., 10 epochs per cycle)
+        epochs_per_cycle = 5
+
+        # Calculate where we are in the *current* cycle
+        current_epoch_in_cycle = (epoch - (self.warmup_steps / len(self.loader))) % epochs_per_cycle
+
+        # Use cosine to anneal from max_lr (self.lr_base) to min_lr (e.g., 0)
+        # and then "restart" at the start of the next cycle.
+        min_lr = 1e-6  # A very small minimum LR
+
+        cos_inner = (math.pi * current_epoch_in_cycle) / epochs_per_cycle
+        current_lr = min_lr + (self.lr_base - min_lr) * (1 + math.cos(cos_inner)) / 2
+
+        return current_lr
 
     def _update_parameters(self, lr):
         """
@@ -227,7 +245,7 @@ class GNNTrainer:
         best_ndcg = 0.0
         best_metrics = None
         patience = 0
-        max_patience = 5
+        max_patience = 10
 
         for epoch in range(1, self.num_epochs + 1):
             self.model.train()
@@ -264,6 +282,20 @@ class GNNTrainer:
                     num_nodes=self.total_nodes
                 )
 
+                # --- [ NEW ] ADD EDGE DROPOUT (TRAIN-ONLY) ---
+                if self.model.training:
+                    # Increased dropout rate to 20%
+                    dropout_rate = 0.2
+
+                    # Create a random mask for edges
+                    # Ensure mask is on the same device as the tensors for efficiency
+                    keep_mask = (torch.rand(edge_index_sub.size(1), device=edge_index_sub.device) > dropout_rate)
+
+                    # Apply the mask
+                    edge_index_sub = edge_index_sub[:, keep_mask]
+                    edge_weight_sub = edge_weight_sub[keep_mask]
+                # --- [ END NEW ] ---
+
                 # Move subgraph data to device
                 batch_nodes = batch_nodes.to(self.device)
                 edge_index_sub = edge_index_sub.to(self.device)
@@ -298,6 +330,14 @@ class GNNTrainer:
                 pos_i_emb = x_sub[pos_i_sub_idx]  # [batch_size, dim]
                 neg_i_emb = x_sub[neg_i_sub_idx]  # [batch_size, k, dim]
 
+                # --- [ NEW ] ADD NODE/EMBEDDING DROPOUT ---
+                if self.model.training:
+                    # Add dropout to the representations themselves (e.g., 20%)
+                    u_emb = F.dropout(u_emb, p=0.2, training=True)
+                    pos_i_emb = F.dropout(pos_i_emb, p=0.2, training=True)
+                    # No need to dropout neg_i_emb, noise is already applied
+                # --- [ END NEW ] ---
+
                 # --- Calculate Weighted BPR Loss ---
                 pos_scores = (u_emb * pos_i_emb).sum(dim=-1, keepdim=True)  # [batch_size, 1]
                 neg_scores = (u_emb.unsqueeze(1) * neg_i_emb).sum(dim=-1)  # [batch_size, k]
@@ -309,7 +349,8 @@ class GNNTrainer:
                 # Apply weights
                 # pos_weights: [batch_size] -> [batch_size, 1]
                 # neg_weights: [batch_size, k]
-                weighted_loss = loss_per_neg * pos_weights_gpu.unsqueeze(1) * neg_weights_gpu
+                weighted_loss = loss_per_neg * pos_weights_gpu.unsqueeze(
+                    1) * neg_weights_gpu  # <-- [ FIX ] Corrected typo
 
                 loss = weighted_loss.mean()
                 # --- End Loss Calculation ---
@@ -373,7 +414,6 @@ class GNNTrainer:
                     if patience >= max_patience:
                         print(f"Early stopping at epoch {epoch}")
                         break
-
 
         print(f"\n>>> finished training")
 

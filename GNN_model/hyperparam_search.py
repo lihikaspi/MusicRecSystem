@@ -19,46 +19,55 @@ def test_evaluation(model: LightGCN, train_graph: HeteroData):
 
 def objective(trial):
     # --- CORRECTED RANGES ---
+    try:
+        # lr: Range shrunk. 0.1 is very high for this type of model.
+        # Centered around your default of 0.01.
+        lr = trial.suggest_float("lr", 1e-4, 5e-2, log=True)
 
-    # lr: Range shrunk. 0.1 is very high for this type of model.
-    # Centered around your default of 0.01.
-    lr = trial.suggest_float("lr", 1e-4, 1e-1, log=True)
+        # neg_samples_per_pos: Range is good, centered on default of 5.
+        neg_samples_per_pos = trial.suggest_int("neg_samples_per_pos", 2, 8)
 
-    # neg_samples_per_pos: Range is good, centered on default of 5.
-    neg_samples_per_pos = trial.suggest_int("neg_samples_per_pos", 2, 8)
+        # listen_weight: Range extended to 1.0 to test "no extra weight".
+        listen_weight = trial.suggest_float("listen_weight", 0.5, 1.0)
 
-    # listen_weight: Range extended to 1.0 to test "no extra weight".
-    listen_weight = trial.suggest_float("listen_weight", 0.5, 1.0)
+        # neutral_neg_weight: Range is good, centered on default of 0.3.
+        neutral_neg_weight = trial.suggest_float("neutral_neg_weight", 0.1, 0.5)
 
-    # neutral_neg_weight: Range is good, centered on default of 0.3.
-    neutral_neg_weight = trial.suggest_float("neutral_neg_weight", 0.1, 0.5)
+        # num_layers: Range shrunk significantly. LightGCN over-smooths.
+        # Centered around your default of 3.
+        num_layers = trial.suggest_int("num_layers", 2, 5)
 
-    # num_layers: Range shrunk significantly. LightGCN over-smooths.
-    # Centered around your default of 3.
-    num_layers = trial.suggest_int("num_layers", 2, 5)
+        # --- END CORRECTIONS ---
 
-    # --- END CORRECTIONS ---
+        config.gnn.lr = lr
+        config.gnn.neg_samples_per_pos = neg_samples_per_pos
+        config.gnn.listen_weight = listen_weight
+        config.gnn.neutral_neg_weight = neutral_neg_weight
+        config.gnn.num_layers = num_layers
 
-    config.gnn.lr = lr
-    config.gnn.neg_samples_per_pos = neg_samples_per_pos
-    config.gnn.listen_weight = listen_weight
-    config.gnn.neutral_neg_weight = neutral_neg_weight
-    config.gnn.num_layers = num_layers
+        torch.cuda.empty_cache()
 
-    torch.cuda.empty_cache()
+        train_graph = torch.load(config.paths.train_graph_file)
 
-    train_graph = torch.load(config.paths.train_graph_file)
+        model = LightGCN(train_graph, config)
+        trainer = GNNTrainer(model, train_graph, config)
 
-    model = LightGCN(train_graph, config)
-    trainer = GNNTrainer(model, train_graph, config)
+        # Optional: short training for hyperparameter search
+        trainer.num_epochs = 8
+        trainer.train(trial=True)
 
-    # Optional: short training for hyperparameter search
-    trainer.num_epochs = 8
-    trainer.train(trial=True)
+        metric = test_evaluation(model, train_graph)  # returns the rank-based metric you care about
 
-    metric = test_evaluation(model, train_graph)  # returns the rank-based metric you care about
+        return metric
 
-    return metric
+    except torch.cuda.OutOfMemoryError as e:
+        print(f"\n--- !!! Trial {trial.number} FAILED due to CUDA OOM !!! ---")
+        print(f"    Parameters: {trial.params}")
+        print(f"    Error: {e}")
+        # Clean up memory
+        torch.cuda.empty_cache()
+        # Tell Optuna to prune this trial
+        raise optuna.exceptions.TrialPruned()
 
 
 def main():

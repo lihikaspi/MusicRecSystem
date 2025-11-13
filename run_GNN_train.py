@@ -94,9 +94,9 @@ def main():
 
     model = LightGCN(train_graph, config)
 
-    # audio_scale, metadata_scale = diagnose_embedding_scales(model)
-    # model.audio_scale = audio_scale
-    # model.metadata_scale = metadata_scale
+    audio_scale, metadata_scale = diagnose_embedding_scales(model)
+    model.audio_scale = audio_scale
+    model.metadata_scale = metadata_scale
 
     trainer = GNNTrainer(model, train_graph, config)
     trainer.train()
