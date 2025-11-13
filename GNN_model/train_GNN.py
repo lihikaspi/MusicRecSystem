@@ -352,27 +352,27 @@ class GNNTrainer:
 
             print(f"Epoch {epoch} | BPR Loss: {avg_loss:.6f} | Avg grad: {avg_grad:.4f}")
 
-            # --- 6. Evaluation ---
-            self.model.eval()
-            val_evaluator = GNNEvaluator(self.model, self.train_graph, "val", self.config)
-            val_metrics = val_evaluator.evaluate()
-            cur_ndcg = val_metrics['ndcg@k']
-            print(f"Epoch {epoch} | NDCG@K: {cur_ndcg:.6f}")
+            if not trial:
+                # --- 6. Evaluation ---
+                self.model.eval()
+                val_evaluator = GNNEvaluator(self.model, self.train_graph, "val", self.config)
+                val_metrics = val_evaluator.evaluate()
+                cur_ndcg = val_metrics['ndcg@k']
+                print(f"Epoch {epoch} | NDCG@K: {cur_ndcg:.6f}")
 
-            if cur_ndcg > best_ndcg:
-                improvement = cur_ndcg - best_ndcg
-                best_ndcg = cur_ndcg
-                best_metrics = val_metrics
-                patience = 0
-                if not trial:
+                if cur_ndcg > best_ndcg:
+                    improvement = cur_ndcg - best_ndcg
+                    best_ndcg = cur_ndcg
+                    best_metrics = val_metrics
+                    patience = 0
                     torch.save(self.model.state_dict(), self.save_path)
                     print(f"> Best model saved ({improvement:.6f})")
-            else:
-                patience += 1
-                print(f"No improvement ({patience}/{max_patience})")
-                if patience >= max_patience:
-                    print(f"Early stopping at epoch {epoch}")
-                    break
+                else:
+                    patience += 1
+                    print(f"No improvement ({patience}/{max_patience})")
+                    if patience >= max_patience:
+                        print(f"Early stopping at epoch {epoch}")
+                        break
 
 
         print(f"\n>>> finished training")
