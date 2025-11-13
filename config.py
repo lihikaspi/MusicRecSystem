@@ -218,9 +218,9 @@ class GNNConfig:
     lr_decay: float = 0.98
     momentum: float = 0.0
     max_grad_norm: float = 1.0
-    init_std: float = 0.01
+    init_std: float = 0.005
 
-    num_epochs: int = 20
+    num_epochs: int = 50
     batch_size: int = 32
     weight_decay: float = 1e-5
     num_workers: int = 16

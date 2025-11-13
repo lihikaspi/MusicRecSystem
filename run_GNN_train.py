@@ -63,7 +63,7 @@ def save_final_embeddings(model: LightGCN, user_embed_path: str, song_embed_path
     with torch.no_grad():
         # Call the new CPU-based forward method.
         # This returns user and item embeddings as CPU tensors.
-        user_emb, item_emb = model.forward_cpu()
+        user_emb, item_emb, _ = model.forward_cpu()
 
         print("Converting final embeddings to NumPy...")
         # Convert to NumPy

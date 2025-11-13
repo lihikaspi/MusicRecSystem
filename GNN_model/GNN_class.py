@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import LGConv
 from torch_geometric.data import HeteroData
+from torch_geometric.utils import add_remaining_self_loops
 from config import Config
 
 
@@ -61,6 +62,7 @@ class LightGCN(nn.Module):
         # Node counts
         self.num_users = data['user'].num_nodes
         self.num_items = data['item'].num_nodes
+        self.num_nodes_total = self.num_users + self.num_items
 
         self.user_emb = nn.Embedding(self.num_users, self.embed_dim)
         nn.init.xavier_uniform_(self.user_emb.weight)
@@ -120,14 +122,19 @@ class LightGCN(nn.Module):
         edge_weight_init_full_homo = torch.cat([edge_weight_init_bipartite, edge_weight_init_bipartite], dim=0)
 
         # Register the new homogeneous buffers
+        # *** NOTE: We do NOT add self-loops here ***
         self.register_buffer('edge_index', edge_index_full_homo)
         self.register_buffer('edge_weight_init', edge_weight_init_full_homo)
         # --- END MODIFICATION ---
 
         # --- REMOVED self.edge_mlp ---
 
-        # --- THE FIX: Disable internal normalization ---
-        self.convs = nn.ModuleList([LGConv(normalize=False) for _ in range(self.num_layers)])
+        # --- THE FIX: Enable normalization, but do NOT add self-loops here ---
+        # Self-loops will be added on-the-fly in the forward passes
+        self.convs = nn.ModuleList([
+            LGConv(normalize=True)
+            for _ in range(self.num_layers)
+        ])
 
         # print_model_info(self)
 
@@ -136,44 +143,25 @@ class LightGCN(nn.Module):
     def _get_item_embeddings(self, item_nodes, device):
         """
         Combine audio + metadata embeddings with fixed scaling.
-
-        'item_nodes' is on 'device' (e.g., 'cuda:0')
-        'device' is 'cuda:0'
-        self.item_audio_emb, self.artist_ids, etc. are on 'cpu'
-        self.artist_emb, self.album_emb, self.audio_proj are on 'cuda:0'
         """
-
-        # --- FIX: Create a CPU copy of the index ---
-        # This is necessary to index the CPU-based buffers
         item_nodes_cpu = item_nodes.cpu()
-
-        # --- FIX: Index CPU buffer, THEN move result to GPU ---
         item_audio = self.item_audio_emb[item_nodes_cpu].to(device)
 
-        # Optional projection (this is fine, audio_proj is on GPU)
         if self.audio_proj is not None:
             item_audio = self.audio_proj(item_audio)
 
-        # --- FIX: Index CPU buffers, THEN move indices to GPU ---
-        # These indices will be used to look up embeddings on the GPU
         artist_ids_batch = self.artist_ids[item_nodes_cpu].to(device)
         album_ids_batch = self.album_ids[item_nodes_cpu].to(device)
 
-        # These lookups are now correct.
-        # Modules (self.artist_emb) are on GPU, indices (artist_ids_batch) are on GPU.
         artist_emb = self.artist_emb(artist_ids_batch)
         album_emb = self.album_emb(album_ids_batch)
 
-        # **Scaling logic (no changes)**
         audio_part = item_audio * self.audio_scale
         metadata_part = (artist_emb + album_emb) * self.metadata_scale
 
-        # Combine and normalize
         item_embed = audio_part + metadata_part
-        # --- NAN FIX: Add eps for numerical stability ---
         item_embed = F.normalize(item_embed, p=2, dim=-1, eps=1e-12)
 
-        # The returned tensor is on 'device'
         return item_embed
 
     def forward(self, return_projections=False):
@@ -184,42 +172,31 @@ class LightGCN(nn.Module):
 
         # Move edge data to device
         edge_index = self.edge_index.to(device)
-        # --- MODIFIED: Use static weights ---
         edge_weight = self.edge_weight_init.to(device)
+
+        # --- DYNAMIC SELF-LOOP FIX ---
+        # Add self-loops to the edge index *and* weights for normalization stability
+        edge_index_with_loops, edge_weight_with_loops = add_remaining_self_loops(
+            edge_index, edge_weight, fill_value=1.0, num_nodes=self.num_nodes_total
+        )
+        # --- END FIX ---
 
         # Initial embeddings
         user_nodes = torch.arange(self.num_users, device=device)
         item_nodes = torch.arange(self.num_items, device=device)
 
-        # --- NAN FIX: Add eps for numerical stability ---
         user_embed = F.normalize(self.user_emb(user_nodes), p=2, dim=-1, eps=1e-12)
         item_embed = self._get_item_embeddings(item_nodes, device)
 
-        # Concatenate users + items
         x = torch.cat([user_embed, item_embed], dim=0)
-
-        # LightGCN propagation with memory-efficient accumulation
-
-        # 'all_emb_sum' will accumulate the embeddings from all layers.
-        # We start it with the initial embeddings (layer 0).
         all_emb_sum = x
 
         for conv in self.convs:
-            # --- MODIFIED: Pass static weights ---
-            # conv will use normalize=False
-            x = conv(x, edge_index, edge_weight=edge_weight)
-
-            # Add the new layer's output to the sum.
-            # This is done in-place (or creates one temporary tensor)
-            # instead of storing all previous tensors.
+            # Pass the tensors *with self-loops* to the conv layer
+            x = conv(x, edge_index_with_loops, edge_weight=edge_weight_with_loops)
             all_emb_sum = all_emb_sum + x
 
-        # We have (num_layers + 1) total layers (layer 0 + the GCN layers)
-        # Get the mean by dividing the sum.
         x = all_emb_sum / (self.num_layers + 1)
-
-        # Normalize final embeddings
-        # --- NAN FIX: Add eps for numerical stability ---
         x = F.normalize(x, p=2, dim=-1, eps=1e-12)
 
         user_emb = x[:self.num_users]
@@ -231,80 +208,53 @@ class LightGCN(nn.Module):
     def forward_cpu(self):
         """
         Performs the full-graph forward pass explicitly on the CPU.
-
-        This method is designed to be memory-efficient and avoid OOM errors
-        on the GPU, making it ideal for saving final embeddings.
-        It replicates the logic from the standard `forward` method but ensures
-        all large tensors and computations (especially propagation) happen on the CPU.
         """
         torch.cuda.empty_cache()
 
-        # --- 1. Get Edge Weight (CPU) ---
-        # --- MODIFIED: No MLP, just load the weights ---
         edge_weight_cpu = self.edge_weight_init.cpu()
+        edge_index_cpu = self.edge_index.cpu()
 
-        # --- 2. Get Initial Embeddings (CPU) ---
+        # --- DYNAMIC SELF-LOOP FIX ---
+        edge_index_with_loops, edge_weight_with_loops = add_remaining_self_loops(
+            edge_index_cpu, edge_weight_cpu, fill_value=1.0, num_nodes=self.num_nodes_total
+        )
+        # --- END FIX ---
+
         cpu_device = torch.device('cpu')
-        param_device = next(self.parameters()).device  # Get GPU device
+        param_device = next(self.parameters()).device
 
-        # --- NAN FIX: Add eps for numerical stability ---
         user_embed = F.normalize(self.user_emb.weight, p=2, dim=-1, eps=1e-12).cpu()
 
-        # Get initial item embeddings on CPU (batched)
         batch_size = 10000
         item_embeds = []
         for i in range(0, self.num_items, batch_size):
             end_idx = min(i + batch_size, self.num_items)
-
-            # --- This logic was already correct ---
-            # Create the batch indices and move them to the *GPU* (param_device)
-            # for the lookup.
             batch_items_gpu = torch.arange(i, end_idx, device=param_device)
-
-            # Call _get_item_embeddings on the GPU. This is fine,
-            # as it's a small, batched operation.
             item_embed_batch_gpu = self._get_item_embeddings(batch_items_gpu, param_device)
-
-            # IMPORTANT: Move the small batch *result* to the CPU for accumulation.
             item_embeds.append(item_embed_batch_gpu.cpu())
-            # --- FIX: END ---
 
-        # This concatenation now happens on the CPU
         item_embed = torch.cat(item_embeds, dim=0)
-        del item_embeds, item_embed_batch_gpu, batch_items_gpu  # Free GPU memory
+        del item_embeds, item_embed_batch_gpu, batch_items_gpu
         torch.cuda.empty_cache()
 
-        # Concatenate users + items on CPU
         x = torch.cat([user_embed, item_embed], dim=0)
-        del user_embed, item_embed  # Free memory
-
-        # --- 3. LightGCN Propagation (CPU) ---
-
-        edge_index_cpu = self.edge_index.to(cpu_device)
+        del user_embed, item_embed
 
         all_emb_sum = x
 
         for i, conv in enumerate(self.convs):
-            # --- MODIFIED: Pass static weights ---
-            # conv will use normalize=False
-            x = conv(x, edge_index_cpu, edge_weight=edge_weight_cpu)
+            # Pass the tensors *with self-loops* to the conv layer
+            x = conv(x, edge_index_with_loops, edge_weight=edge_weight_with_loops)
             all_emb_sum = all_emb_sum + x
 
-        # --- 4. Finalization (CPU) ---
-
         x = all_emb_sum / (self.num_layers + 1)
-        del all_emb_sum  # Free memory
+        del all_emb_sum
 
-        # Normalize final embeddings
-        # --- NAN FIX: Add eps for numerical stability ---
         x = F.normalize(x, p=2, dim=-1, eps=1e-12)
 
-        # Split into final user and item embeddings (still on CPU)
         user_emb = x[:self.num_users]
         item_emb = x[self.num_users:]
 
-        # Return a 3-tuple to match the eval function's expectation
-        # In a real CPU pass, align_loss is not computed.
         align_loss_placeholder = torch.tensor(0.0, device=cpu_device)
 
         return user_emb, item_emb, align_loss_placeholder
@@ -312,24 +262,30 @@ class LightGCN(nn.Module):
     def forward_subgraph(self, batch_nodes, edge_index_sub, edge_weight_init_sub):
         """
         Forward pass on a subgraph with proper embedding combination.
-        --- MODIFIED: Accepts static edge weights ---
         """
         device = next(self.parameters()).device
+
+        # Move base subgraph data to device
         batch_nodes = batch_nodes.to(device)
         edge_index_sub = edge_index_sub.to(device)
-        # --- MODIFIED: Use passed-in static weights ---
         edge_weight_sub = edge_weight_init_sub.to(device)
+
+        # --- DYNAMIC SELF-LOOP FIX ---
+        # Add self-loops *to the subgraph* to ensure no 0-degree nodes
+        # `num_nodes` here is the size of the subgraph (len(batch_nodes))
+        edge_index_sub_loops, edge_weight_sub_loops = add_remaining_self_loops(
+            edge_index_sub, edge_weight_sub, fill_value=1.0, num_nodes=batch_nodes.size(0)
+        )
+        # --- END FIX ---
 
         # Identify users vs items
         user_mask = batch_nodes < self.num_users
         item_mask = ~user_mask
 
         user_nodes = batch_nodes[user_mask]
-        # Item nodes are offset by num_users in the full graph, remove offset
         item_nodes = batch_nodes[item_mask] - self.num_users
 
         # Get embeddings
-        # --- NAN FIX: Add eps for numerical stability ---
         user_embed = F.normalize(self.user_emb(user_nodes), p=2, dim=-1, eps=1e-12)
         item_embed = self._get_item_embeddings(item_nodes, device)
 
@@ -338,18 +294,13 @@ class LightGCN(nn.Module):
         x_sub[user_mask] = user_embed
         x_sub[item_mask] = item_embed
 
-        # **FIX 8: Propagate with layer averaging**
         all_emb = [x_sub]
         for conv in self.convs:
-            # --- MODIFIED: Use static weights ---
-            # conv will use normalize=False
-            x_sub = conv(x_sub, edge_index_sub, edge_weight=edge_weight_sub)  # <-- USE WEIGHTS
+            # Pass the subgraph tensors *with self-loops* to the conv layer
+            x_sub = conv(x_sub, edge_index_sub_loops, edge_weight=edge_weight_sub_loops)
             all_emb.append(x_sub)
 
         x_sub = torch.stack(all_emb, dim=0).mean(dim=0)
-
-        # Normalize final embeddings
-        # --- NAN FIX: Add eps for numerical stability ---
         x_sub = F.normalize(x_sub, p=2, dim=-1, eps=1e-12)
 
         return x_sub, user_nodes, item_nodes
