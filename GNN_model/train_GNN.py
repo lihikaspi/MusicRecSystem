@@ -307,6 +307,16 @@ class GNNTrainer:
                 # Compute loss
                 loss = self._bpr_loss(u_emb_sub, pos_emb_sub, neg_emb_sub, pos_weights, neg_weights)
 
+                # --- DIAGNOSTIC: Check for NaN loss ---
+                if torch.isnan(loss).any() or torch.isinf(loss).any():
+                    print(f"\n!!! NaN/Inf loss detected at epoch {epoch}, batch {batch_idx}!!!")
+                    # You can add more debug info here, e.g., embedding norms
+                    # print(f"u_emb norm: {u_emb_sub.norm().item()}")
+                    # print(f"pos_emb norm: {pos_emb_sub.norm().item()}")
+                    # print(f"neg_emb norm: {neg_emb_sub.norm().item()}")
+                    raise ValueError("NaN/Inf loss detected. Stopping training.")
+                # --- End Diagnostic ---
+
                 # **Scale loss for gradient accumulation**
                 loss = loss / self.accum_steps
 

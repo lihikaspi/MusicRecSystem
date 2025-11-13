@@ -23,6 +23,7 @@ class GNNEvaluator:
 
         # Cache for embeddings
         self._cached_embeddings = None
+        self._orig_id_to_graph_idx = None
 
 
     def _load_and_process(self) -> pd.DataFrame:
@@ -41,6 +42,18 @@ class GNNEvaluator:
             with torch.no_grad():
                 user_emb, item_emb, _ = self.model.forward_cpu()
                 self._cached_embeddings = (user_emb.cpu(), item_emb.cpu())
+
+            if self._orig_id_to_graph_idx is None:
+                # Get the original IDs tensor (size=num_items) stored in the model
+                item_orig_ids_tensor = self.model.item_original_ids.cpu()
+
+                # Create a mapping from original_id -> graph_idx
+                # The graph_idx is just the position in the tensor
+                self._orig_id_to_graph_idx = {
+                    orig_id.item(): graph_idx
+                    for graph_idx, orig_id in enumerate(item_orig_ids_tensor)
+                }
+
         return self._cached_embeddings
 
 
@@ -49,9 +62,11 @@ class GNNEvaluator:
         Same interface as before, now using **adjusted_score** as ground-truth relevance.
         Also returns a new metric: **novelty@k** (fraction of top-k that are unseen).
         """
+        print(">>> starting evaluation")
         k = self.top_k
         df = self._load_and_process()
         user_emb, item_emb = self._get_embeddings()
+        mapper = self._orig_id_to_graph_idx
 
         metrics = {
             "ndcg@k": [],
@@ -71,9 +86,23 @@ class GNNEvaluator:
             topk_set = set(topk_idx)
 
             # ---- ground-truth vectors ----
-            gt_items = group["item_idx"].values
+            gt_orig_ids = group["item_idx"].values
             gt_adj = group["adjusted_score"].values
             gt_seen = group["seen_in_train"].values.astype(bool)
+
+            valid_gt_items_graph_idx = []  # Mapped graph indices
+            valid_gt_adj = []  # Corresponding scores
+
+            for orig_id, adj_score in zip(gt_orig_ids, gt_adj):
+                graph_idx = mapper.get(orig_id)  # Use .get() for safety
+                if graph_idx is not None:
+                    # Only keep items that exist in our model
+                    valid_gt_items_graph_idx.append(graph_idx)
+                    valid_gt_adj.append(adj_score)
+
+            # Convert to numpy arrays
+            gt_items = np.array(valid_gt_items_graph_idx, dtype=np.int64)
+            gt_adj = np.array(valid_gt_adj, dtype=np.float64)
 
             # full relevance vector (size = #items)
             relevance = np.zeros(len(pred), dtype=float)

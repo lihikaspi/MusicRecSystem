@@ -216,7 +216,7 @@ class GNNConfig:
 
     lr: float = 0.01
     lr_decay: float = 0.98
-    momentum: float = 0.9
+    momentum: float = 0.0
     max_grad_norm: float = 1.0
     init_std: float = 0.01
 

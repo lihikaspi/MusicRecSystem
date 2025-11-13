@@ -120,27 +120,34 @@ class LightGCN(nn.Module):
         """
         Combine audio + metadata embeddings with fixed scaling.
 
-        It is expected that 'item_nodes' and 'device' are the model's
-        main device (e.g., 'cuda:0') and all internal buffers
-        (self.artist_ids, etc.) and sub-modules also live on this device.
+        'item_nodes' is on 'device' (e.g., 'cuda:0')
+        'device' is 'cuda:0'
+        self.item_audio_emb, self.artist_ids, etc. are on 'cpu'
+        self.artist_emb, self.album_emb, self.audio_proj are on 'cuda:0'
         """
-        # 'item_nodes' is on 'device', so indexing a tensor on 'device' works.
-        item_audio = self.item_audio_emb[item_nodes]
 
-        # Optional projection
+        # --- FIX: Create a CPU copy of the index ---
+        # This is necessary to index the CPU-based buffers
+        item_nodes_cpu = item_nodes.cpu()
+
+        # --- FIX: Index CPU buffer, THEN move result to GPU ---
+        item_audio = self.item_audio_emb[item_nodes_cpu].to(device)
+
+        # Optional projection (this is fine, audio_proj is on GPU)
         if self.audio_proj is not None:
             item_audio = self.audio_proj(item_audio)
 
-        # Get metadata embeddings
-        # self.artist_ids and self.album_ids are assumed to be on 'device'
-        artist_ids_batch = self.artist_ids[item_nodes]
-        album_ids_batch = self.album_ids[item_nodes]
+        # --- FIX: Index CPU buffers, THEN move indices to GPU ---
+        # These indices will be used to look up embeddings on the GPU
+        artist_ids_batch = self.artist_ids[item_nodes_cpu].to(device)
+        album_ids_batch = self.album_ids[item_nodes_cpu].to(device)
 
-        # self.artist_emb and self.album_emb (nn.Modules) are on 'device'
+        # These lookups are now correct.
+        # Modules (self.artist_emb) are on GPU, indices (artist_ids_batch) are on GPU.
         artist_emb = self.artist_emb(artist_ids_batch)
         album_emb = self.album_emb(album_ids_batch)
 
-        # **FIX 6: Scale to balance frozen vs trainable**
+        # **Scaling logic (no changes)**
         audio_part = item_audio * self.audio_scale
         metadata_part = (artist_emb + album_emb) * self.metadata_scale
 
@@ -148,7 +155,7 @@ class LightGCN(nn.Module):
         item_embed = audio_part + metadata_part
         item_embed = F.normalize(item_embed, p=2, dim=-1)
 
-        # The returned tensor is on 'device' (e.g., 'cuda:0')
+        # The returned tensor is on 'device'
         return item_embed
 
     def forward(self, return_projections=False):
@@ -209,7 +216,6 @@ class LightGCN(nn.Module):
         It replicates the logic from the standard `forward` method but ensures
         all large tensors and computations (especially propagation) happen on the CPU.
         """
-        print("Starting forward pass on CPU...")
         torch.cuda.empty_cache()
 
         # --- 1. Compute Edge Weight (Hybrid GPU/CPU) ---
@@ -219,18 +225,15 @@ class LightGCN(nn.Module):
         edge_weight_cpu = self.edge_mlp(edge_features_gpu).cpu()
         del edge_features_gpu
         torch.cuda.empty_cache()
-        print("Computed edge weights on GPU and moved to CPU.")
 
         # --- 2. Get Initial Embeddings (CPU) ---
         cpu_device = torch.device('cpu')
 
         user_embed = F.normalize(self.user_emb.weight, p=2, dim=-1).cpu()
-        print(f"Loaded initial user embeddings to CPU. Shape: {user_embed.shape}")
 
         # Get initial item embeddings on CPU (batched)
         batch_size = 10000
         item_embeds = []
-        print("Loading initial item embeddings (batches on GPU, results on CPU)...")
         for i in range(0, self.num_items, batch_size):
             end_idx = min(i + batch_size, self.num_items)
 
@@ -251,12 +254,10 @@ class LightGCN(nn.Module):
         item_embed = torch.cat(item_embeds, dim=0)
         del item_embeds, item_embed_batch_gpu, batch_items_gpu  # Free GPU memory
         torch.cuda.empty_cache()
-        print(f"Loaded initial item embeddings to CPU. Shape: {item_embed.shape}")
 
         # Concatenate users + items on CPU
         x = torch.cat([user_embed, item_embed], dim=0)
         del user_embed, item_embed  # Free memory
-        print(f"Concatenated initial embeddings. Shape: {x.shape}")
 
         # --- 3. LightGCN Propagation (CPU) ---
 
@@ -264,28 +265,21 @@ class LightGCN(nn.Module):
 
         all_emb_sum = x
 
-        print("Starting GCN propagation on CPU...")
         for i, conv in enumerate(self.convs):
-            print(f"  Processing layer {i + 1}/{self.num_layers}...")
             x = conv(x, edge_index_cpu, edge_weight=edge_weight_cpu)
             all_emb_sum = all_emb_sum + x
-            print(f"  Finished layer {i + 1}.")
 
         # --- 4. Finalization (CPU) ---
 
         x = all_emb_sum / (self.num_layers + 1)
         del all_emb_sum  # Free memory
-        print("Averaged layer embeddings.")
 
         # Normalize final embeddings
         x = F.normalize(x, p=2, dim=-1)
-        print("Normalized final embeddings.")
 
         # Split into final user and item embeddings (still on CPU)
         user_emb = x[:self.num_users]
         item_emb = x[self.num_users:]
-
-        print("CPU forward pass complete.")
 
         # Return a 3-tuple to match the eval function's expectation
         # In a real CPU pass, align_loss is not computed.
