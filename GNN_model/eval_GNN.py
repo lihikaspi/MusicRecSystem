@@ -5,6 +5,7 @@ from sklearn.metrics import roc_auc_score
 from typing import Dict
 from torch_geometric.data import HeteroData
 from config import Config
+from tqdm import tqdm
 
 
 class GNNEvaluator:
@@ -16,58 +17,66 @@ class GNNEvaluator:
             device: cpu or cuda
         """
         self.device = config.gnn.device
-        self.model = model.to(self.device)
-        self.graph = graph
+        self.model = model.to(self.device)  # model lives on GPU for training
         self.scores_path = getattr(config.paths, f"{eval_set}_scores_file")
         self.top_k = config.gnn.k_hit
+        self.eval_batch_size = config.gnn.eval_batch_size
+
+        self.num_users = graph['user'].num_nodes
+        self.num_items = graph['item'].num_nodes
 
         # Cache for embeddings
         self._cached_embeddings = None
         self._orig_id_to_graph_idx = None
 
-    def _load_and_process(self) -> pd.DataFrame:
-        """Load the pre-computed scores AND vectorize the ID mapping."""
+        # Pre-load and process ground truth relevance scores
+        self.ground_truth = {}
+        self.eval_user_indices = np.array([])
+        self._load_and_process_ground_truth()
+
+    def _load_and_process_ground_truth(self):
+        """Load the pre-computed scores AND pre-process into a dict."""
         df = pd.read_parquet(self.scores_path)
         df = df.rename(columns={"user_id": "user_idx", "item_id": "item_idx"})
 
-        # --- KEY CHANGE 1: VECTORIZED ID MAPPING ---
-        # Get the mapper (this ensures embeddings are cached first)
-        self._get_embeddings()
-        mapper = self._orig_id_to_graph_idx
+        # Create a fast lookup dictionary for ground truth
+        self.ground_truth = {}
 
-        # Map all item IDs to graph indices at once.
-        df['graph_idx'] = df['item_idx'].map(mapper)
+        # Group by user_idx
+        for uid, group in tqdm(df.groupby('user_idx'), desc="Processing GT"):
+            self.ground_truth[uid] = {
+                "item_idx": group["item_idx"].values,  # Original item IDs
+                "adjusted_score": group["adjusted_score"].values,
+                "seen_in_train": group["seen_in_train"].values.astype(bool)
+            }
 
-        # Drop rows for items that are not in our model's embedding table
-        df = df.dropna(subset=['graph_idx'])
-
-        # Convert to int for numpy indexing
-        df['graph_idx'] = df['graph_idx'].astype(np.int64)
-        # -------------------------------------------
-
-        return df
+        self.eval_user_indices = np.array(list(self.ground_truth.keys()), dtype=np.int64)
 
     def _get_embeddings(self):
         """
-        Run full-graph propagation once and cache embeddings.
-
-        --- THIS IS YOUR ORIGINAL OOM-SAFE FUNCTION ---
-        It correctly uses forward_cpu() to avoid GPU OOM.
+        Run full-graph propagation once on CPU (to avoid OOM)
+        and cache embeddings.
         """
         if self._cached_embeddings is None:
+            # --- REVERTED TO CPU FORWARD PASS ---
+            # Move model to CPU temporarily
+            self.model.to('cpu')
             self.model.eval()
             with torch.no_grad():
-                # Use the CPU forward pass
-                user_emb, item_emb, _ = self.model.forward_cpu()
+                # Use the CPU-based forward pass
+                user_emb_cpu, item_emb_cpu, _ = self.model.forward_cpu()
                 # Cache them on the CPU
-                self._cached_embeddings = (user_emb.cpu(), item_emb.cpu())
+                self._cached_embeddings = (user_emb_cpu.cpu(), item_emb_cpu.cpu())
+
+            # Move model back to GPU for training
+            self.model.to(self.device)
+            # --- END REVERT ---
 
             if self._orig_id_to_graph_idx is None:
                 # Get the original IDs tensor (size=num_items) stored in the model
                 item_orig_ids_tensor = self.model.item_original_ids.cpu()
 
                 # Create a mapping from original_id -> graph_idx
-                # The graph_idx is just the position in the tensor
                 self._orig_id_to_graph_idx = {
                     orig_id.item(): graph_idx
                     for graph_idx, orig_id in enumerate(item_orig_ids_tensor)
@@ -75,22 +84,48 @@ class GNNEvaluator:
 
         return self._cached_embeddings
 
+    def _pre_map_ground_truth(self, mapper):
+        """
+        Uses the embedding mapper to convert all original item IDs
+        in the ground truth dict to the model's graph indices.
+        This is done once to avoid repeated .map() calls.
+        """
+        for uid in tqdm(self.eval_user_indices, desc="Mapping GT"):
+            gt = self.ground_truth[uid]
+            orig_ids = gt["item_idx"]
+
+            valid_indices = []
+            graph_indices = []
+
+            for i, orig_id in enumerate(orig_ids):
+                graph_idx = mapper.get(orig_id)
+                if graph_idx is not None:
+                    valid_indices.append(i)
+                    graph_indices.append(graph_idx)
+
+            # Store the mapped and filtered ground truth
+            gt["graph_idx"] = np.array(graph_indices, dtype=np.int64)
+            gt["valid_adj_scores"] = gt["adjusted_score"][valid_indices]
+            gt["valid_seen"] = gt["seen_in_train"][valid_indices]
+
     def evaluate(self) -> Dict[str, float]:
         """
-        Same interface as before, now using **adjusted_score** as ground-truth relevance.
-        Also returns a new metric: **novelty@k** (fraction of top-k that are unseen).
+        Batched, GPU-accelerated evaluation.
         """
-        print(">>> starting evaluation")
+        print(">>> Starting evaluation (batched, GPU)...")
         k = self.top_k
 
-        # This now also maps the IDs
-        df = self._load_and_process()
-
-        # These embeddings are on the CPU
-        user_emb, item_emb = self._get_embeddings()
-
+        # 1. Get Embeddings (on CPU) and Mapper
+        user_emb_cpu, item_emb_cpu = self._get_embeddings()
         mapper = self._orig_id_to_graph_idx
 
+        # 2. Pre-map all ground truth item IDs
+        self._pre_map_ground_truth(mapper)
+
+        # --- MOVE FULL ITEM TENSOR TO GPU (ONCE) ---
+        item_emb_gpu = item_emb_cpu.to(self.device)
+
+        # 3. Initialize metrics
         metrics = {
             "ndcg@k": [],
             "hit_like@k": [],
@@ -100,86 +135,90 @@ class GNNEvaluator:
             "novelty@k": []
         }
 
-        for uid, group in df.groupby('user_idx'):
-            # This is the unavoidable CPU dot product.
-            # It's still the fastest way given your OOM constraint.
-            u = user_emb[uid:uid + 1]
-            pred = torch.mm(u, item_emb.T).squeeze(0).cpu().numpy()
+        # 4. Process users in batches
+        for i in tqdm(range(0, len(self.eval_user_indices), self.eval_batch_size), desc="Evaluating batches"):
+            # Get user indices for this batch
+            batch_user_indices = self.eval_user_indices[i: i + self.eval_batch_size]
 
-            # ---- top-k indices (argpartition is fastest) ----
-            topk_idx = np.argpartition(-pred, k)[:k]
-            topk_set = set(topk_idx)
+            # --- MOVE SMALL USER BATCH TO GPU ---
+            batch_user_emb_gpu = user_emb_cpu[batch_user_indices].to(self.device)
 
-            # ---- ground-truth vectors ----
+            # --- Perform scoring for all users in batch on GPU ---
+            # (eval_batch_size, D) @ (D, num_items) -> (eval_batch_size, num_items)
+            batch_scores_gpu = torch.mm(batch_user_emb_gpu, item_emb_gpu.T)
 
-            # --- KEY CHANGE 1 (Continued): USE PRE-MAPPED INDICES ---
-            # We already did the slow mapping. Just get the values.
-            gt_items = group["graph_idx"].values
-            gt_adj = group["adjusted_score"].values
-            gt_seen = group["seen_in_train"].values.astype(bool)
+            # --- Get Top-K on GPU ---
+            _, batch_topk_indices_gpu = torch.topk(batch_scores_gpu, k, dim=-1)
 
-            # THIS ENTIRE SLOW BLOCK IS NO LONGER NEEDED
-            # gt_orig_ids = group["item_idx"].values
-            # ...
-            # valid_gt_items_graph_idx = []
-            # ...
-            # for orig_id, adj_score in zip(gt_orig_ids, gt_adj):
-            # ...
-            # gt_items = np.array(valid_gt_items_graph_idx, dtype=np.int64)
-            # gt_adj = np.array(valid_gt_adj, dtype=np.float64)
-            # --------------------------------------------------------
+            # --- Move *only* the small results to CPU ---
+            batch_topk_indices_cpu = batch_topk_indices_gpu.cpu().numpy()
 
-            # full relevance vector (size = #items)
-            relevance = np.zeros(len(pred), dtype=float)
-            relevance[gt_items] = gt_adj
+            # We need the full score list for AUC, so move that too.
+            batch_scores_cpu = batch_scores_gpu.cpu().numpy()
 
-            # ----- NDCG@k (graded) -----
-            top_rel = relevance[topk_idx]
-            dcg = np.sum((2 ** np.maximum(top_rel, 0) - 1) / np.log2(np.arange(2, k + 2)))
-            ideal = np.sort(np.maximum(gt_adj, 0))[::-1][:k]
-            idcg = np.sum((2 ** ideal - 1) / np.log2(np.arange(2, len(ideal) + 2)))
-            ndcg = dcg / (idcg if idcg > 0 else 1.0)
-            metrics["ndcg@k"].append(ndcg)
+            # 5. Calculate metrics for each user in the batch (on CPU)
+            for j, user_idx in enumerate(batch_user_indices):
+                topk_idx = batch_topk_indices_cpu[j]
+                topk_set = set(topk_idx)
 
-            # ----- Hit@k (like-equivalent) -----
-            like_items = gt_items[gt_adj > 1.0]  # >1 ≈ explicit like
-            metrics["hit_like@k"].append(float(len(set(like_items) & topk_set) > 0))
+                # Get pre-processed ground truth
+                gt = self.ground_truth[user_idx]
+                gt_items = gt["graph_idx"]  # Already mapped
+                gt_adj = gt["valid_adj_scores"]  # Already filtered
 
-            # ----- Hit@k (like+listen) -----
-            pos_items = gt_items[gt_adj > 0.5]
-            metrics["hit_like_listen@k"].append(float(len(set(pos_items) & topk_set) > 0))
+                # --- NDCG@k (graded) ---
+                # Build a sparse relevance vector for this user
+                relevance = np.zeros(self.num_items, dtype=float)
+                relevance[gt_items] = gt_adj
 
-            # ----- AUC (pos vs neg) -----
+                top_rel = relevance[topk_idx]
+                dcg = np.sum((2 ** np.maximum(top_rel, 0) - 1) / np.log2(np.arange(2, k + 2)))
+                ideal = np.sort(np.maximum(gt_adj, 0))[::-1][:k]
+                idcg = np.sum((2 ** ideal - 1) / np.log2(np.arange(2, len(ideal) + 2)))
+                ndcg = dcg / (idcg if idcg > 0 else 1.0)
+                metrics["ndcg@k"].append(ndcg)
 
-            # --- KEY CHANGE 2: OPTIMIZED AUC ---
-            # Get the small index arrays of pos/neg items
-            pos_items_auc = gt_items[gt_adj > 0]
-            neg_items_auc = gt_items[gt_adj < 0]
+                # --- Hit@k (like-equivalent) ---
+                like_items = gt_items[gt_adj > 1.0]  # >1 ≈ explicit like
+                metrics["hit_like@k"].append(float(len(set(like_items) & topk_set) > 0))
 
-            # Only proceed if we have both
-            if len(pos_items_auc) > 0 and len(neg_items_auc) > 0:
-                y_true = np.concatenate([
-                    np.ones(len(pos_items_auc)),
-                    np.zeros(len(neg_items_auc))
-                ])
+                # --- Hit@k (like+listen) ---
+                pos_items = gt_items[gt_adj > 0.5]
+                metrics["hit_like_listen@k"].append(float(len(set(pos_items) & topk_set) > 0))
 
-                # Slice the 'pred' vector using *only* the relevant indices
-                y_score = np.concatenate([
-                    pred[pos_items_auc],
-                    pred[neg_items_auc]
-                ])
+                # --- AUC (pos vs neg) ---
+                pos_items_auc = gt_items[gt_adj > 0]
+                neg_items_auc = gt_items[gt_adj < 0]
 
-                metrics["auc"].append(roc_auc_score(y_true, y_score))
-            # ---------------------------------
+                if len(pos_items_auc) > 0 and len(neg_items_auc) > 0:
+                    y_true = np.concatenate([
+                        np.ones(len(pos_items_auc)),
+                        np.zeros(len(neg_items_auc))
+                    ])
 
-            # ----- Dislike FPR@k -----
-            dislike_items = gt_items[gt_adj < 0]
-            if len(dislike_items):
-                metrics["dislike_fpr@k"].append(float(len(set(dislike_items) & topk_set) > 0))
+                    # Get the full score vector for this user
+                    pred_scores_user_cpu = batch_scores_cpu[j]
 
-            # ----- Novelty@k (fraction unseen) -----
-            unseen_in_topk = sum(1 for i in topk_idx if i not in gt_items)  # never interacted
-            metrics["novelty@k"].append(unseen_in_topk / k)
+                    y_score = np.concatenate([
+                        pred_scores_user_cpu[pos_items_auc],
+                        pred_scores_user_cpu[neg_items_auc]
+                    ])
+
+                    try:
+                        metrics["auc"].append(roc_auc_score(y_true, y_score))
+                    except ValueError:
+                        pass  # Handle cases where all scores are identical
+
+                # --- Dislike FPR@k ---
+                dislike_items = gt_items[gt_adj < 0]
+                if len(dislike_items):
+                    metrics["dislike_fpr@k"].append(float(len(set(dislike_items) & topk_set) > 0))
+
+                # --- Novelty@k (fraction unseen) ---
+                all_interacted_items_set = set(gt_items)
+                unseen_in_topk = sum(1 for i in topk_idx if i not in all_interacted_items_set)
+                metrics["novelty@k"].append(unseen_in_topk / k)
 
         # ---- average over users ----
+        print(">>> Evaluation complete.")
         return {m: float(np.mean(v)) if len(v) else 0.0 for m, v in metrics.items()}

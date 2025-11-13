@@ -9,110 +9,66 @@ from torch_geometric.utils import subgraph
 from GNN_model.GNN_class import LightGCN
 from GNN_model.eval_GNN import GNNEvaluator
 from config import Config
+from collections import defaultdict
 
 
-class BPRDataset(Dataset):
+class RegressionDataset(Dataset):
+    """
+    Dataset for regression.
+    __getitem__ returns all interactions for a single user.
+    """
+
     def __init__(self, train_graph, config: Config):
+        # We need the user-centric view: user -> list of items and scores
         edge_index = train_graph['user', 'interacts', 'item'].edge_index
-        edge_attr = train_graph['user', 'interacts', 'item'].edge_attr
+        edge_weights = train_graph['user', 'interacts', 'item'].edge_weight_init
 
-        user_idx, item_idx = edge_index
-        edge_types = edge_attr[:, 0]
+        user_ids_all = edge_index[0].cpu().numpy()
+        item_ids_all = edge_index[1].cpu().numpy()
+        scores_all = edge_weights.cpu().numpy()
 
-        self.user2pos = {}
-        self.user2pos_types = {}
-        self.user2neg = {}
-        self.num_items = int(train_graph['item'].num_nodes)
+        self.user_data = defaultdict(lambda: {'items': [], 'scores': []})
+        for user_id, item_id, score in zip(user_ids_all, item_ids_all, scores_all):
+            self.user_data[user_id]['items'].append(item_id)
+            self.user_data[user_id]['scores'].append(score)
 
-        self.listen_weight = config.gnn.listen_weight
-        self.neutral_neg_weight = config.gnn.neutral_neg_weight
-        self.neg_samples_per_pos = config.gnn.neg_samples_per_pos
-        self.edge_type_mapping = config.preprocessing.edge_type_mapping
+        self.users = list(self.user_data.keys())
 
-        pos_types = [self.edge_type_mapping[k] for k in ["listen", "like", "undislike"]]
-        neg_types = [self.edge_type_mapping[k] for k in ["dislike", "unlike"]]
+        # Get node counts from the graph
+        self.num_users = train_graph['user'].num_nodes
+        self.num_items = train_graph['item'].num_nodes
 
-        for u, i, t in zip(user_idx.tolist(), item_idx.tolist(), edge_types.tolist()):
-            t_int = int(round(t))
-            if t_int in pos_types:
-                self.user2pos.setdefault(u, []).append(i)
-                self.user2pos_types.setdefault(u, []).append(t_int)
-            elif t_int in neg_types:
-                self.user2neg.setdefault(u, []).append(i)
-
-        for u in self.user2neg:
-            self.user2neg[u] = list(set(self.user2neg[u]) - set(self.user2pos.get(u, [])))
-
-        self.users = list(self.user2pos.keys())
+        print(f"RegressionDataset: Loaded {len(self.users)} users with {len(scores_all)} total interactions.")
 
     def __len__(self):
         return len(self.users)
 
     def __getitem__(self, idx):
-        u = self.users[idx]
-        pos_items = self.user2pos[u]
-        pos_types = self.user2pos_types[u]
-        neg_items = self.user2neg.get(u, [])
+        user_id = self.users[idx]
+        data = self.user_data[user_id]
 
-        i_pos_idx = np.random.randint(len(pos_items))
-        i_pos = pos_items[i_pos_idx]
-        edge_type_of_pos = pos_types[i_pos_idx]
-        pos_weight = self.listen_weight if edge_type_of_pos == self.edge_type_mapping["listen"] else 1.0
-
-        known_pos_set = set(pos_items)
-        all_negs_set = set(neg_items)
-
-        neg_samples = []
-        neg_weights = []
-        for _ in range(self.neg_samples_per_pos):
-
-            # First, try to get a "hard" negative
-            if len(neg_items) > 0:
-                i_neg = np.random.choice(neg_items)
-                neg_items.remove(i_neg)  # Sample without replacement
-                weight = 1.0
-
-            # **NEW LOGIC: If no hard negatives, sample from all items**
-            else:
-                while True:
-                    # Sample a random item from the *entire catalog*
-                    i_neg = np.random.randint(self.num_items)
-
-                    # Keep sampling until we find one that is NOT positive
-                    if i_neg not in known_pos_set:
-                        break  # Found a valid random negative
-
-                weight = self.neutral_neg_weight
-
-            neg_samples.append(i_neg)
-            neg_weights.append(weight)
-
+        # item_ids will be offset by num_users in the collate fn
         return (
-            torch.tensor(u, dtype=torch.long),
-            torch.tensor(i_pos, dtype=torch.long),
-            torch.tensor(neg_samples, dtype=torch.long),
-            torch.tensor(pos_weight, dtype=torch.float),
-            torch.tensor(neg_weights, dtype=torch.float),
-            torch.tensor(pos_items, dtype=torch.long),
-            torch.tensor(neg_samples, dtype=torch.long),
+            torch.tensor(user_id, dtype=torch.long),
+            torch.tensor(data['items'], dtype=torch.long),
+            torch.tensor(data['scores'], dtype=torch.float)
         )
 
 
-def collate_bpr(batch):
-    u_idx = torch.stack([b[0] for b in batch])
-    i_pos_idx = torch.stack([b[1] for b in batch])
-    i_neg_idx = torch.stack([b[2] for b in batch])
-    pos_weights = torch.stack([b[3] for b in batch])
-    neg_weights = torch.stack([b[4] for b in batch])
-    all_pos = [b[5] for b in batch]
-    all_neg = [b[6] for b in batch]
-    return u_idx, i_pos_idx, i_neg_idx, pos_weights, neg_weights, all_pos, all_neg
+def collate_regression(batch):
+    """
+    Collates a batch of user-centric data.
+    """
+    users = [b[0] for b in batch]
+    item_lists = [b[1] for b in batch]
+    score_lists = [b[2] for b in batch]
+
+    return users, item_lists, score_lists
 
 
 class GNNTrainer:
     """
-    Memory-efficient trainer with ZERO extra parameter storage.
-    Uses pure SGD with gradient accumulation and careful scheduling.
+    User-centric regression trainer.
     """
 
     def __init__(self, model: LightGCN, train_graph, config: Config):
@@ -124,83 +80,56 @@ class GNNTrainer:
         self.num_epochs = config.gnn.num_epochs
         self.save_path = config.paths.trained_gnn
 
-        self.dataset = BPRDataset(train_graph, config)
+        self.dataset = RegressionDataset(train_graph, config)
+
+        # --- DATALOADER SPEEDUP FIXES ---
         pin_memory = 'cuda' in str(self.device)
         self.loader = DataLoader(
             self.dataset,
             batch_size=self.batch_size,
             shuffle=True,
             num_workers=config.gnn.num_workers,
+            collate_fn=collate_regression,
             pin_memory=pin_memory,
-            collate_fn=collate_bpr
+            persistent_workers=True if config.gnn.num_workers > 0 else False
         )
+        # --- END FIXES ---
 
-        self.edge_index_full = train_graph['user', 'interacts', 'item'].edge_index.cpu()
+        # Get data from the *model* buffers, which are already homogeneous
+        self.edge_index_full = self.model.edge_index.cpu()
+        self.edge_weight_full = self.model.edge_weight_init.cpu()
 
-        # **MEMORY-EFFICIENT: No momentum storage, just scalar tracking**
+        self.num_users = self.model.num_users
+        self.num_items = self.model.num_items
+        self.total_nodes = self.num_users + self.num_items
+
         self.lr_base = config.gnn.lr
-        self.lr_decay = config.gnn.lr_decay  # Slower decay
+        self.lr_decay = config.gnn.lr_decay
         self.weight_decay = config.gnn.weight_decay
         self.max_grad_norm = config.gnn.max_grad_norm
 
-        # **Track only scalars for adaptive LR (negligible memory)**
         self.step_count = 0
-        self.warmup_steps = 100  # Gradual warmup
+        self.warmup_steps = 100
+        self.accum_steps = config.gnn.accum_steps
 
-        # **Gradient accumulation to simulate larger batches without memory cost**
-        self.accum_steps = config.gnn.accum_steps  # Accumulate over 2 batches
+        self.loss_fn = torch.nn.MSELoss()
 
     def _get_lr(self, epoch):
         """
-        Learning rate schedule without storing state
+        Learning rate schedule with warmup and decay.
         """
-        # Warmup for first epoch
+        if self.step_count == 0:  # Avoid division by zero on first step
+            return self.lr_base * (1 / self.warmup_steps)
+
         if self.step_count < self.warmup_steps:
             return self.lr_base * (self.step_count / self.warmup_steps)
 
         # Exponential decay after warmup
-        return self.lr_base * (self.lr_decay ** epoch)
-
-    def _bpr_loss(self, u_emb, pos_emb, neg_emb, pos_weight, neg_weight):
-        """Weighted BPR loss with margin"""
-        pos_score = (u_emb * pos_emb).sum(dim=-1, keepdim=True)
-        neg_score = (u_emb.unsqueeze(1) * neg_emb).sum(dim=-1)
-
-        margin = 0.1
-        diff = pos_score - neg_score + margin
-        loss = -torch.log(torch.sigmoid(diff) + 1e-8)
-
-        weighted_loss = loss * pos_weight.unsqueeze(1) * neg_weight
-        return weighted_loss.mean()
-
-    def _clip_and_get_norm(self):
-        """
-        Clip gradients by global norm, return the norm value.
-        This is done in-place, no extra memory.
-        """
-        total_norm = 0.0
-        params_with_grad = []
-
-        for param in self.model.parameters():
-            if param.grad is not None:
-                param_norm = param.grad.data.norm(2)
-                total_norm += param_norm.item() ** 2
-                params_with_grad.append(param)
-
-        total_norm = total_norm ** 0.5
-
-        # Clip if needed
-        clip_coef = self.max_grad_norm / (total_norm + 1e-6)
-        if clip_coef < 1:
-            for param in params_with_grad:
-                param.grad.data.mul_(clip_coef)
-
-        return total_norm
+        return self.lr_base * (self.lr_decay ** (epoch - (self.warmup_steps / len(self.loader))))
 
     def _update_parameters(self, lr):
         """
         Pure SGD update with per-parameter LR and weight decay.
-        NO extra memory usage.
         """
         with torch.no_grad():
             for name, param in self.model.named_parameters():
@@ -209,11 +138,9 @@ class GNNTrainer:
 
                 # **Different LR for different parameter types**
                 if 'user_emb' in name:
-                    param_lr = lr * 1.0  # Normal for user embeddings
+                    param_lr = lr * 1.0
                 elif 'artist_emb' in name or 'album_emb' in name:
-                    param_lr = lr * 2.0  # 2x faster for metadata (they need to catch up)
-                elif 'mlp' in name or 'edge' in name:
-                    param_lr = lr * 0.5  # Slower for MLP
+                    param_lr = lr * 2.0
                 else:
                     param_lr = lr
 
@@ -225,12 +152,11 @@ class GNNTrainer:
                 # **Pure SGD update**
                 param.data.add_(grad, alpha=-param_lr)
 
-    def train(self, trial = False):
-        print(f">>> starting training")
+    def train(self, trial=False):
+        print(f">>> starting training with REGRESSION loss")
         os.makedirs(os.path.dirname(self.save_path), exist_ok=True)
         self.model.to(self.device)
 
-        best_loss = float('inf')
         best_ndcg = 0.0
         best_metrics = None
         patience = 0
@@ -248,104 +174,121 @@ class GNNTrainer:
             progress = tqdm(self.loader, desc=f"Epoch {epoch} (LR={current_lr:.6f})", leave=True)
 
             for batch_idx, batch in enumerate(progress):
-                u_idx, i_pos_idx, i_neg_idx, pos_weights, neg_weights, all_pos_list, all_neg_list = [
-                    x.to(self.device) if isinstance(x, torch.Tensor) else x for x in batch
-                ]
+                users, item_lists, score_lists = batch
 
-                # Build subgraph
-                batch_nodes_set = set()
-                for u, pos_items, neg_samples in zip(u_idx.tolist(), all_pos_list, i_neg_idx.tolist()):
-                    nodes = [u] + pos_items.tolist() + neg_samples
-                    batch_nodes_set.update(nodes)
-                batch_nodes = torch.tensor(list(batch_nodes_set), device=self.device)
+                # --- 1. Build Subgraph ---
+                batch_nodes_set = set(users)
+                all_items_flat = []
+                for items in item_lists:
+                    # item_ids from dataset are 0 to num_items-1
+                    # offset them to get global homogeneous ID
+                    all_items_flat.extend(items.numpy() + self.num_users)
 
-                batch_nodes_cpu = batch_nodes.cpu()
-                edge_index_full_cpu = self.edge_index_full.cpu()
-                edge_features_full_cpu = self.model.edge_features.cpu()
+                batch_nodes_set.update(all_items_flat)
+                batch_nodes = torch.tensor(list(batch_nodes_set), device='cpu')  # Subgraph on CPU
 
-                # Pass edge_attr to subgraph()
-                edge_index_sub, edge_features_sub = subgraph(
-                    batch_nodes_cpu,
-                    edge_index_full_cpu,
-                    edge_attr=edge_features_full_cpu,  # <-- PASS FEATURES
-                    relabel_nodes=True
+                edge_index_sub, edge_weight_sub = subgraph(
+                    batch_nodes,
+                    self.edge_index_full,
+                    edge_attr=self.edge_weight_full,
+                    relabel_nodes=True,
+                    num_nodes=self.total_nodes
                 )
 
                 # Move subgraph data to device
+                batch_nodes = batch_nodes.to(self.device)
                 edge_index_sub = edge_index_sub.to(self.device)
-                edge_features_sub = edge_features_sub.to(self.device)  # <-- NEW
+                edge_weight_sub = edge_weight_sub.to(self.device)
 
-                # Forward pass
-                x_sub, user_nodes_sub, item_nodes_sub = self.model.forward_subgraph(
+                # --- 2. Forward Pass ---
+                x_sub, _, _ = self.model.forward_subgraph(
                     batch_nodes,
                     edge_index_sub,
-                    edge_features_sub  # <-- PASS TO MODEL
+                    edge_weight_sub
                 )
-                # Map nodes
+
+                # --- 3. Map nodes and Calculate Loss ---
+                # Create a reverse map from global node_id -> subgraph_idx
                 node_map = torch.full((int(batch_nodes.max()) + 1,), -1, device=self.device)
                 node_map[batch_nodes] = torch.arange(len(batch_nodes), device=self.device)
-                u_emb_sub = x_sub[node_map[u_idx]]
-                pos_emb_sub = x_sub[node_map[i_pos_idx]]
-                neg_emb_sub = x_sub[node_map[i_neg_idx]]
 
-                # **DIAGNOSTIC: Print every 10 batches**
-                # if batch_idx % 10 == 0:
-                #     with torch.no_grad():
-                #         item_audio = self.model.item_audio_emb[item_nodes_sub].to(self.device)
-                #         artist_emb = self.model.artist_emb(self.model.artist_ids[item_nodes_sub].to(self.device))
-                #         album_emb = self.model.album_emb(self.model.album_ids[item_nodes_sub].to(self.device))
-                #
-                #         # **Show scaled norms (what actually goes into the model)**
-                #         audio_scaled = (item_audio * self.model.audio_scale).norm(dim=-1).mean()
-                #         metadata_scaled = ((artist_emb + album_emb) * self.model.metadata_scale).norm(dim=-1).mean()
-                #
-                #         print(f"\nBatch {batch_idx} | "
-                #               f"audio*scale: {audio_scaled:.4f}, "
-                #               f"metadata*scale: {metadata_scaled:.4f}, "
-                #               f"ratio: {metadata_scaled / audio_scaled:.2f}")
+                # Collect all (user, item, score) pairs from the batch
+                pred_scores_list = []
+                true_scores_list = []
 
-                # Compute loss
-                loss = self._bpr_loss(u_emb_sub, pos_emb_sub, neg_emb_sub, pos_weights, neg_weights)
+                for u, items, scores in zip(users, item_lists, score_lists):
+                    # Get subgraph indices
+                    u_sub_idx = node_map[u]
+                    i_sub_idx = node_map[items.to(self.device) + self.num_users]  # offset items
 
-                # --- DIAGNOSTIC: Check for NaN loss ---
-                if torch.isnan(loss).any() or torch.isinf(loss).any():
-                    print(f"\n!!! NaN/Inf loss detected at epoch {epoch}, batch {batch_idx}!!!")
-                    # You can add more debug info here, e.g., embedding norms
-                    # print(f"u_emb norm: {u_emb_sub.norm().item()}")
-                    # print(f"pos_emb norm: {pos_emb_sub.norm().item()}")
-                    # print(f"neg_emb norm: {neg_emb_sub.norm().item()}")
-                    raise ValueError("NaN/Inf loss detected. Stopping training.")
+                    # Get embeddings
+                    u_emb_sub = x_sub[u_sub_idx]
+                    i_emb_sub = x_sub[i_sub_idx]
+
+                    # Calculate dot product
+                    pred_scores = (u_emb_sub * i_emb_sub).sum(dim=-1)
+
+                    pred_scores_list.append(pred_scores)
+                    true_scores_list.append(scores.to(self.device))
+
+                pred_scores_all = torch.cat(pred_scores_list)
+                true_scores_all = torch.cat(true_scores_list)
+
+                # --- DIAGNOSTIC: Check for NaN/Inf before loss ---
+                if not torch.isfinite(pred_scores_all).all():
+                    print(f"\n!!! NaN/Inf detected in Pred scores at epoch {epoch}, batch {batch_idx}!!!")
+                    # D-print norms
+                    print(f"Pred scores norm: {pred_scores_all.norm().item()}")
+                    print(f"True scores norm: {true_scores_all.norm().item()}")
+
+                    with torch.no_grad():
+                        base_user_emb_norm = self.model.user_emb.weight.norm().item()
+                        base_item_emb_norm = self.model._get_item_embeddings(torch.arange(5, device=self.device),
+                                                                             self.device).norm().item()
+                        print(f"Base user emb norm: {base_user_emb_norm}")
+                        print(f"Base item emb norm: {base_item_emb_norm}")
+
+                    raise ValueError("NaN/Inf in predicted scores. Stopping training.")
                 # --- End Diagnostic ---
 
-                # **Scale loss for gradient accumulation**
-                loss = loss / self.accum_steps
+                loss = self.loss_fn(pred_scores_all, true_scores_all)
 
-                # Backward pass
+                # Scale loss for gradient accumulation
+                loss = loss / self.accum_steps
                 loss.backward()
 
-                # **Update only every accum_steps batches**
+                # --- 4. Optimizer Step ---
                 if (batch_idx + 1) % self.accum_steps == 0:
                     # Clip gradients
-                    grad_norm = self._clip_and_get_norm()
+                    grad_norm = torch.nn.utils.clip_grad_norm_(
+                        self.model.parameters(), self.max_grad_norm
+                    )
 
-                    # Get current LR
-                    self.step_count += 1
-                    step_lr = self._get_lr(epoch)
+                    # --- OOM/NaN Fix: Check the grad_norm *float* ---
+                    if not np.isfinite(grad_norm.item()):
+                        print(f"\n!!! NaN/Inf GRADIENT detected at epoch {epoch}, batch {batch_idx}!!!")
+                        print(f"Grad norm was: {grad_norm.item()}")
+                        self.model.zero_grad(set_to_none=True)
+                        print("Skipping update for this step.")
+                    else:
+                        # Get current LR
+                        self.step_count += 1
+                        current_step_lr = self._get_lr(epoch)
 
-                    # Update parameters
-                    self._update_parameters(step_lr)
+                        # Update parameters
+                        self._update_parameters(current_step_lr)
+
+                        epoch_grad_norm += grad_norm.item()
 
                     # Zero gradients
                     self.model.zero_grad(set_to_none=True)
-
-                    epoch_grad_norm += grad_norm
 
                 # Track metrics (unscaled loss for reporting)
                 epoch_loss += loss.item() * self.accum_steps
                 num_batches += 1
 
                 progress.set_postfix({
-                    'loss': f'{epoch_loss / num_batches:.4f}',
+                    'mse_loss': f'{epoch_loss / num_batches:.6f}',
                 })
 
             # Clear any remaining gradients

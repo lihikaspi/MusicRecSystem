@@ -45,18 +45,8 @@ def print_model_info(model):
     print("-----------------------------------")
 
 
-class EdgeWeightMLP(nn.Module):
-    def __init__(self, config: Config):
-        super().__init__()
-        self.mlp = nn.Sequential(
-            nn.Linear(config.gnn.edge_mlp_input_dim, config.gnn.edge_mlp_hidden_dim),
-            nn.ReLU(),
-            nn.Linear(config.gnn.edge_mlp_hidden_dim, 1),
-            nn.Sigmoid()
-        )
-
-    def forward(self, edge_features):
-        return self.mlp(edge_features).squeeze()
+# --- REMOVED EdgeWeightMLP ---
+# We are simplifying the model to use static weights.
 
 
 class LightGCN(nn.Module):
@@ -72,13 +62,21 @@ class LightGCN(nn.Module):
         self.num_users = data['user'].num_nodes
         self.num_items = data['item'].num_nodes
 
-        # **FIX 1: Initialize embeddings with smaller scale**
         self.user_emb = nn.Embedding(self.num_users, self.embed_dim)
-        # nn.init.normal_(self.user_emb.weight, mean=0, std=0.01)
         nn.init.xavier_uniform_(self.user_emb.weight)
 
+        # --- NEW: Sanitize Audio Embeddings ---
+        raw_audio_emb = data['item'].x.cpu()
+        # Check for NaNs and Infs
+        if torch.isnan(raw_audio_emb).any() or torch.isinf(raw_audio_emb).any():
+            print(">>> WARNING: NaNs or Infs detected in raw audio embeddings. Replacing with 0.")
+            # Replace NaNs with 0
+            raw_audio_emb = torch.nan_to_num(raw_audio_emb, nan=0.0, posinf=0.0, neginf=0.0)
+
         # Keep on CPU, move to GPU only when needed
-        self.register_buffer('item_audio_emb', data['item'].x.cpu())
+        self.register_buffer('item_audio_emb', raw_audio_emb)
+        # --- END SANITIZE ---
+
         self.register_buffer('artist_ids', data['item'].artist_id.cpu())
         self.register_buffer('album_ids', data['item'].album_id.cpu())
         self.register_buffer('user_original_ids', data['user'].uid.cpu())
@@ -89,29 +87,47 @@ class LightGCN(nn.Module):
         self.artist_emb = nn.Embedding(num_artists, self.embed_dim)
         self.album_emb = nn.Embedding(num_albums, self.embed_dim)
 
-        # **FIX 2: Better initialization for metadata embeddings**
         nn.init.xavier_uniform_(self.artist_emb.weight)
         nn.init.xavier_uniform_(self.album_emb.weight)
 
-        # **FIX 3: Optimal scaling from diagnostic (30% audio, 70% metadata)**
         self.audio_scale = config.gnn.audio_scale
         self.metadata_scale = config.gnn.metadata_scale
 
-        # **FIX 4: Optional: Add projection layer for audio (comment out if OOM)**
-        # audio_dim = data['item'].x.shape[1]
-        # self.audio_proj = nn.Linear(audio_dim, self.embed_dim)
-        # nn.init.xavier_uniform_(self.audio_proj.weight)
         self.audio_proj = None  # Set to None to save memory
 
         # Edge features
-        self.register_buffer('edge_index', data['user', 'interacts', 'item'].edge_index.cpu())
-        self.register_buffer('edge_attr', data['user', 'interacts', 'item'].edge_attr.cpu())
-        self.register_buffer('edge_weight_init', data['user', 'interacts', 'item'].edge_weight_init.cpu())
-        edge_features = torch.cat([self.edge_attr, self.edge_weight_init.unsqueeze(1)], dim=1)
-        self.register_buffer('edge_features', edge_features.cpu())
+        # --- MODIFICATION: Create Homogeneous Edge Index ---
+        edge_index_bipartite = data['user', 'interacts', 'item'].edge_index.cpu()
+        edge_weight_init_bipartite = data['user', 'interacts', 'item'].edge_weight_init.cpu()
 
-        self.edge_mlp = EdgeWeightMLP(config)
-        self.convs = nn.ModuleList([LGConv() for _ in range(self.num_layers)])
+        # --- NEW: Sanitize Edge Weights ---
+        if torch.isnan(edge_weight_init_bipartite).any() or torch.isinf(edge_weight_init_bipartite).any():
+            print(">>> WARNING: NaNs or Infs detected in raw edge weights. Replacing with 0.")
+            edge_weight_init_bipartite = torch.nan_to_num(edge_weight_init_bipartite, nan=0.0, posinf=0.0, neginf=0.0)
+        # --- END SANITIZE ---
+
+        # Forward edges (user -> item)
+        fwd_edge_index = edge_index_bipartite.clone()
+        fwd_edge_index[1] += self.num_users  # Offset item IDs
+
+        # Backward edges (item -> user)
+        bwd_edge_index = torch.stack([fwd_edge_index[1], fwd_edge_index[0]], dim=0)
+
+        # Combine
+        edge_index_full_homo = torch.cat([fwd_edge_index, bwd_edge_index], dim=1)
+
+        # Combine weights (they are the same for both directions)
+        edge_weight_init_full_homo = torch.cat([edge_weight_init_bipartite, edge_weight_init_bipartite], dim=0)
+
+        # Register the new homogeneous buffers
+        self.register_buffer('edge_index', edge_index_full_homo)
+        self.register_buffer('edge_weight_init', edge_weight_init_full_homo)
+        # --- END MODIFICATION ---
+
+        # --- REMOVED self.edge_mlp ---
+
+        # --- THE FIX: Disable internal normalization ---
+        self.convs = nn.ModuleList([LGConv(normalize=False) for _ in range(self.num_layers)])
 
         # print_model_info(self)
 
@@ -154,7 +170,8 @@ class LightGCN(nn.Module):
 
         # Combine and normalize
         item_embed = audio_part + metadata_part
-        item_embed = F.normalize(item_embed, p=2, dim=-1)
+        # --- NAN FIX: Add eps for numerical stability ---
+        item_embed = F.normalize(item_embed, p=2, dim=-1, eps=1e-12)
 
         # The returned tensor is on 'device'
         return item_embed
@@ -167,14 +184,15 @@ class LightGCN(nn.Module):
 
         # Move edge data to device
         edge_index = self.edge_index.to(device)
-        edge_features = self.edge_features.to(device)
-        edge_weight = self.edge_mlp(edge_features)
+        # --- MODIFIED: Use static weights ---
+        edge_weight = self.edge_weight_init.to(device)
 
         # Initial embeddings
         user_nodes = torch.arange(self.num_users, device=device)
         item_nodes = torch.arange(self.num_items, device=device)
 
-        user_embed = F.normalize(self.user_emb(user_nodes), p=2, dim=-1)
+        # --- NAN FIX: Add eps for numerical stability ---
+        user_embed = F.normalize(self.user_emb(user_nodes), p=2, dim=-1, eps=1e-12)
         item_embed = self._get_item_embeddings(item_nodes, device)
 
         # Concatenate users + items
@@ -187,7 +205,8 @@ class LightGCN(nn.Module):
         all_emb_sum = x
 
         for conv in self.convs:
-            # Propagate to get the next layer's embeddings
+            # --- MODIFIED: Pass static weights ---
+            # conv will use normalize=False
             x = conv(x, edge_index, edge_weight=edge_weight)
 
             # Add the new layer's output to the sum.
@@ -200,7 +219,8 @@ class LightGCN(nn.Module):
         x = all_emb_sum / (self.num_layers + 1)
 
         # Normalize final embeddings
-        x = F.normalize(x, p=2, dim=-1)
+        # --- NAN FIX: Add eps for numerical stability ---
+        x = F.normalize(x, p=2, dim=-1, eps=1e-12)
 
         user_emb = x[:self.num_users]
         item_emb = x[self.num_users:]
@@ -219,18 +239,16 @@ class LightGCN(nn.Module):
         """
         torch.cuda.empty_cache()
 
-        # --- 1. Compute Edge Weight (Hybrid GPU/CPU) ---
-        param_device = next(self.parameters()).device
-
-        edge_features_gpu = self.edge_features.to(param_device)
-        edge_weight_cpu = self.edge_mlp(edge_features_gpu).cpu()
-        del edge_features_gpu
-        torch.cuda.empty_cache()
+        # --- 1. Get Edge Weight (CPU) ---
+        # --- MODIFIED: No MLP, just load the weights ---
+        edge_weight_cpu = self.edge_weight_init.cpu()
 
         # --- 2. Get Initial Embeddings (CPU) ---
         cpu_device = torch.device('cpu')
+        param_device = next(self.parameters()).device  # Get GPU device
 
-        user_embed = F.normalize(self.user_emb.weight, p=2, dim=-1).cpu()
+        # --- NAN FIX: Add eps for numerical stability ---
+        user_embed = F.normalize(self.user_emb.weight, p=2, dim=-1, eps=1e-12).cpu()
 
         # Get initial item embeddings on CPU (batched)
         batch_size = 10000
@@ -238,7 +256,7 @@ class LightGCN(nn.Module):
         for i in range(0, self.num_items, batch_size):
             end_idx = min(i + batch_size, self.num_items)
 
-            # --- FIX: START ---
+            # --- This logic was already correct ---
             # Create the batch indices and move them to the *GPU* (param_device)
             # for the lookup.
             batch_items_gpu = torch.arange(i, end_idx, device=param_device)
@@ -267,6 +285,8 @@ class LightGCN(nn.Module):
         all_emb_sum = x
 
         for i, conv in enumerate(self.convs):
+            # --- MODIFIED: Pass static weights ---
+            # conv will use normalize=False
             x = conv(x, edge_index_cpu, edge_weight=edge_weight_cpu)
             all_emb_sum = all_emb_sum + x
 
@@ -276,7 +296,8 @@ class LightGCN(nn.Module):
         del all_emb_sum  # Free memory
 
         # Normalize final embeddings
-        x = F.normalize(x, p=2, dim=-1)
+        # --- NAN FIX: Add eps for numerical stability ---
+        x = F.normalize(x, p=2, dim=-1, eps=1e-12)
 
         # Split into final user and item embeddings (still on CPU)
         user_emb = x[:self.num_users]
@@ -288,25 +309,28 @@ class LightGCN(nn.Module):
 
         return user_emb, item_emb, align_loss_placeholder
 
-
-    def forward_subgraph(self, batch_nodes, edge_index_sub, edge_features_sub):
+    def forward_subgraph(self, batch_nodes, edge_index_sub, edge_weight_init_sub):
         """
-        Forward pass on a subgraph with proper embedding combination
+        Forward pass on a subgraph with proper embedding combination.
+        --- MODIFIED: Accepts static edge weights ---
         """
         device = next(self.parameters()).device
         batch_nodes = batch_nodes.to(device)
         edge_index_sub = edge_index_sub.to(device)
-        edge_weight_sub = self.edge_mlp(edge_features_sub)
+        # --- MODIFIED: Use passed-in static weights ---
+        edge_weight_sub = edge_weight_init_sub.to(device)
 
         # Identify users vs items
         user_mask = batch_nodes < self.num_users
         item_mask = ~user_mask
 
         user_nodes = batch_nodes[user_mask]
+        # Item nodes are offset by num_users in the full graph, remove offset
         item_nodes = batch_nodes[item_mask] - self.num_users
 
         # Get embeddings
-        user_embed = F.normalize(self.user_emb(user_nodes), p=2, dim=-1)
+        # --- NAN FIX: Add eps for numerical stability ---
+        user_embed = F.normalize(self.user_emb(user_nodes), p=2, dim=-1, eps=1e-12)
         item_embed = self._get_item_embeddings(item_nodes, device)
 
         # Concatenate in subgraph order
@@ -317,12 +341,15 @@ class LightGCN(nn.Module):
         # **FIX 8: Propagate with layer averaging**
         all_emb = [x_sub]
         for conv in self.convs:
+            # --- MODIFIED: Use static weights ---
+            # conv will use normalize=False
             x_sub = conv(x_sub, edge_index_sub, edge_weight=edge_weight_sub)  # <-- USE WEIGHTS
             all_emb.append(x_sub)
 
         x_sub = torch.stack(all_emb, dim=0).mean(dim=0)
 
         # Normalize final embeddings
-        x_sub = F.normalize(x_sub, p=2, dim=-1)
+        # --- NAN FIX: Add eps for numerical stability ---
+        x_sub = F.normalize(x_sub, p=2, dim=-1, eps=1e-12)
 
         return x_sub, user_nodes, item_nodes
