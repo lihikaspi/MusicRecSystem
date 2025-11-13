@@ -39,7 +39,7 @@ class GNNEvaluator:
         if self._cached_embeddings is None:
             self.model.eval()
             with torch.no_grad():
-                user_emb, item_emb, _ = self.model()
+                user_emb, item_emb, _ = self.model.forward_cpu()
                 self._cached_embeddings = (user_emb.cpu(), item_emb.cpu())
         return self._cached_embeddings
 

@@ -50,71 +50,42 @@ def test_evaluation(model: LightGCN, train_graph: HeteroData):
 
 def save_final_embeddings(model: LightGCN, user_embed_path: str, song_embed_path: str):
     """
-    Save embeddings with memory-efficient batched computation
+    Saves final user and song embeddings to disk.
+
+    This function sets the model to evaluation mode and calls the
+    memory-efficient `forward_cpu` method to get embeddings
+    without causing GPU OOM errors.
     """
+    print("Starting to save final embeddings...")
     torch.cuda.empty_cache()
     model.eval()
 
     with torch.no_grad():
-        # Move edge data to CPU after computing edge weights
-        device = next(model.parameters()).device
+        # Call the new CPU-based forward method.
+        # This returns user and item embeddings as CPU tensors.
+        user_emb, item_emb = model.forward_cpu()
 
-        # Compute edge weights on GPU but keep small
-        edge_features = model.edge_features.to(device)
-        edge_weight = model.edge_mlp(edge_features).cpu()
-        del edge_features
-        torch.cuda.empty_cache()
-
-        # Move everything to CPU for computation
-        edge_index_cpu = model.edge_index
-        edge_weight_cpu = edge_weight
-
-        # Compute embeddings on CPU (slower but won't OOM)
-        user_nodes = torch.arange(model.num_users)
-        item_nodes = torch.arange(model.num_items)
-
-        # Get initial embeddings (move to CPU immediately)
-        user_embed = F.normalize(model.user_emb.weight, p=2, dim=-1).cpu()
-
-        # Get item embeddings batch by batch
-        batch_size = 10000
-        item_embeds = []
-        for i in range(0, model.num_items, batch_size):
-            end_idx = min(i + batch_size, model.num_items)
-            batch_items = torch.arange(i, end_idx)
-            item_embed_batch = model._get_item_embeddings(batch_items, torch.device('cpu'))
-            item_embeds.append(item_embed_batch)
-        item_embed = torch.cat(item_embeds, dim=0)
-
-        # Concatenate on CPU
-        x = torch.cat([user_embed, item_embed], dim=0)
-
-        # LightGCN propagation on CPU
-        all_emb_sum = x
-
-        for i, conv in enumerate(model.convs):
-            print(f"Processing layer {i+1}/{model.num_layers}...")
-            x = conv(x, edge_index_cpu, edge_weight=edge_weight_cpu)
-            all_emb_sum = all_emb_sum + x
-
-        x = all_emb_sum / (model.num_layers + 1)
-        x = F.normalize(x, p=2, dim=-1)
-
-        user_emb = x[:model.num_users]
-        item_emb = x[model.num_users:]
-
+        print("Converting final embeddings to NumPy...")
         # Convert to NumPy
+        # Tensors are already on CPU, so .numpy() is direct and fast
         user_emb_np = user_emb.numpy().astype(np.float32)
         item_emb_np = item_emb.numpy().astype(np.float32)
 
-        user_ids_np = model.user_original_ids.numpy()
-        item_ids_np = model.item_original_ids.numpy()
+        # Get original IDs (assuming these are already on CPU or small)
+        user_ids_np = model.user_original_ids.cpu().numpy()
+        item_ids_np = model.item_original_ids.cpu().numpy()
 
+        # Save to .npz files
+        print(f"Saving user embeddings to {user_embed_path}...")
         np.savez(user_embed_path, embeddings=user_emb_np, original_ids=user_ids_np)
+
+        print(f"Saving song embeddings to {song_embed_path}...")
         np.savez(song_embed_path, embeddings=item_emb_np, original_ids=item_ids_np)
 
+    print("-------------------------------------------------")
     print(f"User embeddings saved to {user_embed_path}")
     print(f"Song embeddings saved to {song_embed_path}")
+    print("Embedding saving process complete.")
 
 
 def main():

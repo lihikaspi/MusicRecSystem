@@ -166,8 +166,8 @@ class PathsConfig:
 # -------------------
 @dataclass
 class PreprocessingConfig:
-    low_interaction_threshold: int = 600
-    high_interaction_threshold: int = 6000
+    low_interaction_threshold: int = 680
+    high_interaction_threshold: int = 6800
     edge_type_mapping: Dict[str, int] = field(default_factory=lambda: {
         "listen": 1,
         "like": 2,

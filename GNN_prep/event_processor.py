@@ -1,4 +1,5 @@
 import duckdb
+from typing import Dict
 from config import Config
 import numpy as np
 import pandas as pd
@@ -24,6 +25,9 @@ class EventProcessor:
         self.split_ratios = config.preprocessing.split_ratios
         self.split_paths = config.paths.split_paths
 
+        self.val_scores = config.paths.val_scores_file
+        self.test_scores = config.paths.test_scores_file
+
         self.cold_start_songs_path = config.paths.cold_start_songs_file
         self.filtered_audio_embed_file = config.paths.filtered_audio_embed_file
         self.filtered_user_embed_file = config.paths.filtered_user_embed_file
@@ -33,6 +37,8 @@ class EventProcessor:
         self.positive_interactions_file = config.paths.positive_interactions_file
 
         self.top_k = config.gnn.top_popular_k
+        self.weight = config.preprocessing.weights
+        self.novelty = config.preprocessing.novelty
 
 
     def _compute_active_users(self):
@@ -202,124 +208,142 @@ class EventProcessor:
         self._save_cold_start_songs()
 
 
-    # TODO: split to smaller functions
-    def _compute_relevance_scores(self):
+    def _process_split(self, split: str, case_base: str, novelty_params: dict, out_path: str):
         """
-        1. Base relevance  – weighted sum of all events (listen, like, …)
-        2. Novelty factor – unseen boost + train-play penalty + recency decay
-        3. Final adjusted_score = base * (1 + novelty_factor)
+        Runs the full SQL pipeline for a single data split (val or test).
+        1. Create {split}_raw (event-level scores)
+        2. Create {split}_scores (user-item aggregated scores)
+        3. Create {split}_final (novelty-adjusted scores)
+        4. Export to Parquet
         """
-        w = Config.preprocessing.weights  # existing weights
-        n = Config.preprocessing.novelty  # novelty parameters
+        # Use a shorter alias for f-strings
+        n = novelty_params
 
+        # --- 1. Event-level scores ---
+        raw_query = f"""
+            CREATE TEMPORARY TABLE {split}_raw AS
+            SELECT
+                e.user_id,
+                e.item_id,
+                e.timestamp,
+                ( {case_base} )                                AS base_relevance,
+                1                                              AS n_events,
+                COALESCE(t.play_cnt,0)                         AS train_play_cnt,
+                COALESCE(t.seen_in_train,0)                    AS seen_in_train
+            FROM split_data e
+            LEFT JOIN (
+                SELECT user_id, item_id,
+                       COUNT(*)               AS play_cnt,
+                       1                      AS seen_in_train
+                FROM split_data
+                WHERE split = 'train' AND event_type = 'listen'
+                GROUP BY user_id, item_id
+            ) t
+                ON e.user_id = t.user_id AND e.item_id = t.item_id
+            WHERE e.split = '{split}'
+        """
+        self.con.execute(raw_query)
+
+        # --- 2. Aggregated scores per user-item ---
+        agg_query = f"""
+            CREATE TEMPORARY TABLE {split}_scores AS
+            SELECT
+                user_id,
+                item_id,
+                SUM(base_relevance)    AS base_relevance,
+                SUM(n_events)          AS total_events,
+                MAX(seen_in_train)     AS seen_in_train,
+                MAX(train_play_cnt)    AS train_play_cnt,
+                MAX(timestamp)         AS latest_ts
+            FROM {split}_raw
+            GROUP BY user_id, item_id
+        """
+        self.con.execute(agg_query)
+
+        # --- 3. Final scores with novelty adjustment ---
+        final_query = f"""
+            CREATE TEMPORARY TABLE {split}_final AS
+            SELECT
+                user_id,
+                item_id,
+                base_relevance,
+                total_events,
+                seen_in_train,
+                train_play_cnt,
+
+                -- Calculate novelty factor
+                (CASE WHEN seen_in_train = 0 THEN {n['unseen_boost']} ELSE 0 END)
+                - {n['train_penalty']} * LEAST(train_play_cnt, {n['max_familiarity']}) / {n['max_familiarity']}
+                + CASE WHEN seen_in_train = 1 THEN
+                        EXP(-{n['recency_beta']} * (EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) - latest_ts))
+                      ELSE 0 END
+                AS novelty_factor,
+
+                -- Calculate final adjusted score
+                base_relevance * (1 + novelty_factor) AS adjusted_score
+
+            FROM {split}_scores
+        """
+        self.con.execute(final_query)
+
+        # --- 4. Export results to Parquet ---
+        export_query = f"""
+            COPY (
+                SELECT user_id, item_id, base_relevance, adjusted_score, 
+                       total_events, seen_in_train, train_play_cnt 
+                FROM {split}_final
+            ) TO '{out_path}' (FORMAT PARQUET)
+        """
+        self.con.execute(export_query)
+
+        print(f"  > {split.capitalize()} scores saved → {out_path}")
+
+
+    def _build_relevance_case_statement(self, weights: Dict[str, float]) -> str:
+        """
+        Builds the SQL CASE statement string for calculating base relevance
+        based on event type and weights.
+        """
         case_base = "CASE e.event_type\n"
-        for etype, weight in w.items():
+        for etype, weight in weights.items():
             if etype == "listen":
                 case_base += f"    WHEN '{etype}' THEN {weight} * (COALESCE(e.played_ratio_pct,0)/100.0)\n"
-            elif etype in ("like", "undislike"):
+            else:
                 case_base += f"    WHEN '{etype}' THEN {weight}\n"
-            elif etype in ("dislike", "unlike"):
-                case_base += f"    WHEN '{etype}' THEN -{weight}\n"
         case_base += "    ELSE 0.0 END"
+        return case_base
 
-        for split in ("val", "test"):
-            query = f"""
-                CREATE TEMPORARY TABLE {split}_raw AS
-                SELECT
-                    e.user_id,
-                    e.item_id,
-                    e.event_type,
-                    e.played_ratio_pct,
-                    e.timestamp,
-                    SUM({case_base})                               AS base_relevance,
-                    COUNT(*)                                       AS n_events,
-                    -- train-play counts (0 if never seen in train)
-                    COALESCE(t.play_cnt,0)                         AS train_play_cnt,
-                    -- 1 if the song appears at least once in train for this user
-                    COALESCE(t.seen_in_train,0)                    AS seen_in_train
-                FROM split_data e
-                LEFT JOIN (
-                    SELECT user_id, item_id,
-                           COUNT(*)               AS play_cnt,
-                           1                      AS seen_in_train
-                    FROM split_data
-                    WHERE split = 'train' AND event_type = 'listen'
-                    GROUP BY user_id, item_id
-                ) t
-                    ON e.user_id = t.user_id AND e.item_id = t.item_id
-                WHERE e.split = '{split}'
-                GROUP BY e.user_id, e.item_id, e.timestamp, e.event_type, e.played_ratio_pct,
-                         t.play_cnt, t.seen_in_train
-            """
 
-            self.con.execute(query)
+    def _compute_relevance_scores(self):
+        """
+        Main coordinator function.
+        Calculates and saves base and novelty-adjusted relevance scores
+        for validation and test splits.
+        """
+        # 1. Get attributes from self
+        w = self.weight
+        n = self.novelty
 
-            agg_query = f"""
-                CREATE TEMPORARY TABLE {split}_scores AS
-                SELECT
-                    user_id,
-                    item_id,
-                    SUM(base_relevance)                                                AS base_relevance,
-                    SUM(n_events)                                                      AS total_events,
+        # 2. Build reusable SQL snippet
+        case_base = self._build_relevance_case_statement(w)
 
-                    -- Novelty components
-                    MAX(seen_in_train)                                                 AS seen_in_train,
-                    MAX(train_play_cnt)                                                AS train_play_cnt,
-                    MIN(timestamp)                                                     AS earliest_ts,   -- for recency
-                    MAX(timestamp)                                                     AS latest_ts
+        # 3. Process each split sequentially
+        print("Processing validation split...")
+        self._process_split(
+            split='val',
+            case_base=case_base,
+            novelty_params=n,
+            out_path=self.val_scores # Assuming paths are still in Config
+        )
 
-                FROM {split}_raw
-                GROUP BY user_id, item_id
-            """
-            self.con.execute(agg_query)
-
-            final_query = f"""
-                CREATE TEMPORARY TABLE {split}_final AS
-                SELECT
-                    user_id,
-                    item_id,
-                    base_relevance,
-                    total_events,
-
-                    -- 4a) unseen boost
-                    CASE WHEN seen_in_train = 0 THEN {n['unseen_boost']} ELSE 0 END   AS unseen_boost,
-
-                    -- 4b) train-play penalty (normalised)
-                    LEAST(train_play_cnt, {n['max_familiarity']}) / {n['max_familiarity']} AS norm_familiarity,
-                    -{n['train_penalty']} * LEAST(train_play_cnt, {n['max_familiarity']}) / {n['max_familiarity']} AS train_penalty,
-
-                    -- 4c) recency decay (only if seen before)
-                    CASE
-                        WHEN seen_in_train = 1 THEN
-                            EXP(-{n['recency_beta']} * (EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - latest_ts))))
-                        ELSE 0
-                    END                                                             AS recency_factor,
-
-                    -- 4d) final novelty multiplier (additive)
-                    (CASE WHEN seen_in_train = 0 THEN {n['unseen_boost']} ELSE 0 END)
-                    - {n['train_penalty']} * LEAST(train_play_cnt, {n['max_familiarity']}) / {n['max_familiarity']}
-                    + CASE WHEN seen_in_train = 1 THEN
-                            EXP(-{n['recency_beta']} * (EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - latest_ts))))
-                          ELSE 0 END                                          AS novelty_factor,
-
-                    -- 4e) final adjusted score
-                    base_relevance * (1 + 
-                        (CASE WHEN seen_in_train = 0 THEN {n['unseen_boost']} ELSE 0 END)
-                        - {n['train_penalty']} * LEAST(train_play_cnt, {n['max_familiarity']}) / {n['max_familiarity']}
-                        + CASE WHEN seen_in_train = 1 THEN
-                            EXP(-{n['recency_beta']} * (EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - latest_ts))))
-                          ELSE 0 END
-                    )                                                             AS adjusted_score
-
-                FROM {split}_scores
-            """
-            self.con.execute(final_query)
-
-            out_path = Config.paths.val_scores_file if split == "val" else Config.paths.test_scores_file
-            self.con.execute(
-                f"COPY (SELECT user_id, item_id, base_relevance, adjusted_score, total_events, seen_in_train, train_play_cnt "
-                f"FROM {split}_final) TO '{out_path}' (FORMAT PARQUET)")
-            print(f"{split.capitalize()} scores (base + adjusted) saved → {out_path}")
+        print("Processing test split...")
+        self._process_split(
+            split='test',
+            case_base=case_base,
+            novelty_params=n,
+            out_path=self.test_scores  # Assuming paths are still in Config
+        )
+        print("Relevance score processing complete.")
 
 
     def _save_filtered_user_ids(self):
@@ -440,11 +464,11 @@ class EventProcessor:
         temp_table = f"{split_name}_user_pos_emb"
         query = f"""
             CREATE OR REPLACE TEMPORARY TABLE {temp_table} AS
-            SELECT user_id, item_id, ANY_VALUE(emb.normalized_embed) AS normalized_embed
+            SELECT e.user_id, e.item_id, ANY_VALUE(emb.normalized_embed) AS normalized_embed
             FROM read_parquet('{split_path}') e
             JOIN read_parquet('{self.embeddings_path}') emb ON e.item_id = emb.item_id
             WHERE e.event_type IN ('listen', 'like', 'undislike')
-            GROUP BY user_id, item_id
+            GROUP BY e.user_id, e.item_id
         """
         self.con.execute(query)
 

@@ -353,6 +353,7 @@ class GNNTrainer:
                 val_evaluator = GNNEvaluator(self.model, self.train_graph, "val", self.config)
                 val_metrics = val_evaluator.evaluate()
                 cur_ndcg = val_metrics['ndcg@k']
+                print(f"Epoch {epoch} | NDCG@K: {cur_ndcg:.6f}")
 
                 if cur_ndcg > best_ndcg:
                     improvement = cur_ndcg - best_ndcg
