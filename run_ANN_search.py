@@ -15,39 +15,38 @@ def check_prev_files():
     """
     needed = [config.paths.user_embeddings_gnn, config.paths.song_embeddings_gnn,
               config.paths.cold_start_songs_file, config.paths.filtered_audio_embed_file,
-              config.paths.filtered_user_embed_file, config.paths.filtered_songs_id,
+              config.paths.filtered_user_embed_file, config.paths.filtered_song_ids,   # FIX: plural
               config.paths.filtered_user_ids, config.paths.popular_song_ids,
               config.paths.positive_interactions_file]
     fail = False
     for file in needed:
-      if not os.path.exists(file):
-        print("Couldn't find file: {}".format(file))
-        fail = True
+        if not os.path.exists(file):
+            print("Couldn't find file: {}".format(file))
+            fail = True
     if fail:
-      raise FileNotFoundError("Needed files are missing, run previous stage to create the needed files!")
+        raise FileNotFoundError("Needed files are missing, run previous stage to create the needed files!")
     else:
-      print("All needed files are present! starting indexing ... ")
+        print("All needed files are present! starting indexing ... ")
 
 
 def recommend_popular():
     song_ids = np.load(config.paths.popular_song_ids)
     user_ids = np.load(config.paths.filtered_user_ids)
-    top_k_ids = song_ids[config.ann.top_k:]
-
-    results = {uid: recs.tolist() for uid, recs in zip(user_ids, top_k_ids)}
-
+    
+    top_k_ids = song_ids[:config.ann.top_k]
+    results = {int(uid): top_k_ids.tolist() for uid in user_ids}
     return results
 
 
 def recommend_random():
-    song_ids = np.load(config.paths.filtered_songs_id)
+  
+    song_ids = np.load(config.paths.filtered_song_ids)
     user_ids = np.load(config.paths.filtered_user_ids)
     num_users = len(user_ids)
     num_songs = len(song_ids)
-    rec_song_ids = np.random.randint(num_songs, size=(num_users, config.ann.top_k))
-
-    results = {uid: recs.tolist() for uid, recs in zip(user_ids, rec_song_ids)}
-
+    idx = np.random.randint(num_songs, size=(num_users, config.ann.top_k))
+    rec_song_ids = song_ids[idx]  # map to real item IDs
+    results = {int(uid): recs.tolist() for uid, recs in zip(user_ids, rec_song_ids)}
     return results
 
 
@@ -62,7 +61,7 @@ def recommend_cf(top_k=10, top_sim_items=50):
 
     # ---- Step 2: Load user and song IDs ----
     user_ids = np.load(config.paths.filtered_user_ids)
-    song_ids = np.load(config.paths.filtered_songs_id)
+    song_ids = np.load(config.paths.filtered_song_ids)  # FIX: plural key
 
     user_to_idx = {u: i for i, u in enumerate(user_ids)}
     idx_to_user = {i: u for i, u in enumerate(user_ids)}
@@ -112,7 +111,7 @@ def recommend_cf(top_k=10, top_sim_items=50):
                 if n_item not in user_vector:
                     scores[n_item] = scores.get(n_item, 0) + sim
         top_items = sorted(scores, key=lambda x: -scores[x])[:top_k]
-        results_dict[idx_to_user[u_idx]] = [idx_to_song[i] for i in top_items]
+        results_dict[int(idx_to_user[u_idx])] = [int(idx_to_song[i]) for i in top_items]
 
     return results_dict
 
