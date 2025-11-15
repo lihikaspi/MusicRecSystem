@@ -126,35 +126,8 @@ class LightGCN(nn.Module):
         self.register_buffer('edge_index', edge_index_full_homo)
         self.register_buffer('edge_weight_init', edge_weight_init_full_homo)
 
-        # ============================================================================
-        # CRITICAL FIX: Handle negative edge weights that cause NaN in LGConv
-        # ============================================================================
-        print(">>> Fixing edge weights to prevent NaN...")
-
-        # Check current range
-        min_w = self.edge_weight_init.min().item()
-        max_w = self.edge_weight_init.max().item()
-        neg_count = (self.edge_weight_init < 0).sum().item()
-        zero_count = (self.edge_weight_init == 0).sum().item()
-
-        print(f"    Original: min={min_w:.4f}, max={max_w:.4f}, "
-              f"negatives={neg_count}, zeros={zero_count}")
-
-        # Take absolute value to convert negative weights to positive
-        # Rationale: Negative weights (dislikes) cause NaN in LGConv normalization
-        # but still represent strong user-item interactions
-        self.edge_weight_init.data = (self.edge_weight_init.data + 1.0) * 0.5 + 0.1
-
-        # Ensure no zeros remain
-        if (self.edge_weight_init == 0).any():
-            self.edge_weight_init.data = torch.where(
-                self.edge_weight_init.data == 0,
-                torch.tensor(1e-6),
-                self.edge_weight_init.data
-            )
-        # --- END MODIFICATION ---
-
-        # --- REMOVED self.edge_mlp ---
+        # Ensure all edge weights are positive
+        self.edge_weight_init.data = torch.clamp(self.edge_weight_init.data, min=1e-6)
 
         # --- THE FIX: Enable normalization, but do NOT add self-loops here ---
         # Self-loops will be added on-the-fly in the forward passes

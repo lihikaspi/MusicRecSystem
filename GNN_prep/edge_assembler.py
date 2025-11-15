@@ -19,42 +19,6 @@ class EdgeAssembler:
         self.artist_mapping_path = config.paths.artist_mapping_file
         self.event_type_mapping = config.preprocessing.edge_type_mapping
 
-
-    def _filter_cancelled_events(self):
-        """
-        Filters train events to cancel out likes/unlikes and dislikes/undislikes.
-        - Keeps all listen events.
-        - Removes likes followed by unlikes and dislikes followed by undislikes.
-        Creates a temporary table 'filtered_events' for aggregation.
-        """
-        cancel_query = f"""
-        CREATE TEMPORARY TABLE no_cancelled_events AS
-        SELECT *
-        FROM read_parquet('{self.train_path}') e
-        WHERE e.event_type = 'listen'
-           OR (e.event_type = 'like'
-               AND NOT EXISTS (
-                   SELECT 1 FROM read_parquet('{self.train_path}') x
-                   WHERE x.user_id = e.user_id
-                     AND x.item_idx = e.item_idx
-                     AND x.event_type = 'unlike'
-                     AND x.timestamp > e.timestamp
-               )
-           )
-           OR (e.event_type = 'dislike'
-               AND NOT EXISTS (
-                   SELECT 1 FROM read_parquet('{self.train_path}') x
-                   WHERE x.user_id = e.user_id
-                     AND x.item_idx = e.item_idx
-                     AND x.event_type = 'undislike'
-                     AND x.timestamp > e.timestamp
-               )
-           )
-        """
-        self.con.execute(cancel_query)
-        print("Finished filtering cancelled events")
-
-
     def _aggregate_edges(self):
         """
         Aggregates the interactions by user-song-event, adding interactions counter, event-type weights and the audio embeddings.
@@ -200,7 +164,6 @@ class EdgeAssembler:
         Args:
             output_path: path to output file, default: None
         """
-        # self._filter_cancelled_events()
         self._aggregate_edges()
         self._add_song_metadata()
 

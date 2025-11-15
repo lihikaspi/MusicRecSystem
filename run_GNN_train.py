@@ -18,7 +18,8 @@ def check_prev_files():
     if at least one file is missing raises FileNotFoundError
     """
     needed = [config.paths.audio_embeddings_file, config.paths.train_graph_file,
-              config.paths.test_scores_file, config.paths.negative_train_interactions_file]
+              config.paths.test_scores_file, config.paths.negative_train_in_graph_file,
+              config.paths.negative_train_cold_start_file]
     fail = False
     for file in needed:
         if not os.path.exists(file):
