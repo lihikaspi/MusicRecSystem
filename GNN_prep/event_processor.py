@@ -35,7 +35,8 @@ class EventProcessor:
         self.filtered_user_ids = config.paths.filtered_user_ids
         self.popular_song_ids = config.paths.popular_song_ids
         self.positive_interactions_file = config.paths.positive_interactions_file
-        self.negative_train_interactions_file = config.paths.negative_train_interactions_file
+        self.negative_train_in_graph_file = config.paths.negative_train_in_graph_file
+        self.negative_train_cold_start_file = config.paths.negative_train_cold_start_file
 
         self.top_k = config.gnn.top_popular_k
         self.weight = config.preprocessing.weights
@@ -200,18 +201,62 @@ class EventProcessor:
         print("Finished removing negative edges")
 
 
-    def _save_neg_interactions(self, split: str):
-        query = f"""
-            CREATE TEMPORARY TABLE neg_interactions AS
-            SELECT uid, user_id, item_id, DISTINCT event_type 
+    def _save_neg_interactions(self):
+        """
+        Saves negative interactions for a given split into two files:
+        1. In-Graph: Lightweight file with user_id, item_id (for items in the train set).
+        2. Cold-Start: Heavy file with user_id, item_id, normalized_embed (for items NOT in the train set).
+        """
+        split = 'train'
+
+        print(f"Splitting negative '{split}' interactions...")
+
+        # 1. Get all unique item_ids that are in the 'train' split (positive or negative)
+        # These are the items that will be "in-graph"
+        self.con.execute("""
+            CREATE TEMPORARY TABLE train_set_items AS
+            SELECT DISTINCT item_id
+            FROM split_data
+            WHERE split = 'train'
+        """)
+
+        # 2. Get all negative events for the target split
+        self.con.execute(f"""
+            CREATE TEMPORARY TABLE neg_events AS
+            SELECT DISTINCT uid, user_id, item_id, event_type
             FROM split_data
             WHERE event_type NOT IN ('listen', 'like', 'undislike')
-            AND split = {split}
-        """
+              AND split = '{split}'
+        """)
 
-        self.con.execute(query)
-        self.con.execute(f"COPY (SELECT * FROM neg_interactions) TO {self.negative_train_interactions_file} (FORMAT PARQUET)")
-        print(f"Saved {split} negative interactions")
+        # 3. Save In-Graph negatives (lightweight)
+        # These are negative events where the item_id *IS* in the train_set_items
+        in_graph_query = f"""
+            COPY (
+                SELECT neg.user_id, neg.item_id
+                FROM neg_events AS neg
+                INNER JOIN train_set_items AS tsi
+                  ON neg.item_id = tsi.item_id
+            ) TO '{self.negative_train_in_graph_file}' (FORMAT PARQUET)
+        """
+        self.con.execute(in_graph_query)
+        print(f"Saved in-graph negative interactions to {self.negative_train_in_graph_file}")
+
+        # 4. Save Cold-Start negatives (heavy)
+        # These are negative events where the item_id *IS NOT* in the train_set_items
+        cold_start_query = f"""
+            COPY (
+                SELECT neg.user_id, neg.item_id, emb.normalized_embed
+                FROM neg_events AS neg
+                LEFT JOIN train_set_items AS tsi
+                  ON neg.item_id = tsi.item_id
+                INNER JOIN read_parquet('{self.embeddings_path}') AS emb
+                  ON neg.item_id = emb.item_id
+                WHERE tsi.item_id IS NULL
+            ) TO '{self.negative_train_cold_start_file}' (FORMAT PARQUET)
+        """
+        self.con.execute(cold_start_query)
+        print(f"Saved cold-start negative interactions to {self.negative_train_cold_start_file}")
 
 
     def _save_splits(self):
@@ -223,25 +268,6 @@ class EventProcessor:
 
         self.con.execute(f"COPY (SELECT * FROM split_data WHERE split='test') TO '{self.split_paths['test']}' (FORMAT PARQUET)")
         print(f"Test data saved to {self.split_paths['test']}")
-
-
-    def split_data(self, split_ratios: dict = None):
-        """
-        splits the filtered multi-event file into train, validation and test sets and
-        saves the embeddings of the cold-start songs.
-
-        Args:
-            split_ratios: dictionary of split ratios, default: none
-        """
-        if split_ratios is not None:
-            self.split_ratios = split_ratios
-
-        self._split_data()
-        self._compute_relevance_scores()
-        self._save_cold_start_songs()
-        self._remove_neg_train_edges()
-        self._save_neg_interactions('train')
-        self._save_splits()
 
 
     def _process_split(self, split: str, case_base: str, novelty_params: dict, out_path: str):
@@ -348,6 +374,25 @@ class EventProcessor:
                 case_base += f"    WHEN '{etype}' THEN {weight}\n"
         case_base += "    ELSE 0.0 END"
         return case_base
+
+
+    def split_data(self, split_ratios: dict = None):
+        """
+        splits the filtered multi-event file into train, validation and test sets and
+        saves the embeddings of the cold-start songs.
+
+        Args:
+            split_ratios: dictionary of split ratios, default: none
+        """
+        if split_ratios is not None:
+            self.split_ratios = split_ratios
+
+        self._split_data()
+        self._compute_relevance_scores()
+        self._save_cold_start_songs()
+        self._remove_neg_train_edges()
+        self._save_neg_interactions('train')
+        self._save_splits()
 
 
     def _compute_relevance_scores(self):

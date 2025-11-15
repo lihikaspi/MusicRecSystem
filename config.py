@@ -68,7 +68,8 @@ class PathsConfig:
     filtered_user_ids: str = field(init=False)
     popular_song_ids: str = field(init=False)
     positive_interactions_file: str = field(init=False)
-    negative_train_interactions_file: str = field(init=False)
+    negative_train_in_graph_file: str = field(init=False)
+    negative_train_cold_start_file: str = field(init=False)
 
     train_edges_file: str = field(init=False)
     train_graph_file: str = field(init=False)
@@ -129,7 +130,8 @@ class PathsConfig:
         self.filtered_user_ids = f"{self.processed_dir}/filtered_user_ids.npy"
         self.popular_song_ids = f"{self.processed_dir}/popular_song_ids.npy"
         self.positive_interactions_file = f"{self.processed_dir}/positive_interactions.parquet"
-        self.negative_train_interactions_file = f"{self.processed_dir}/negative_train_interactions.parquet"
+        self.negative_train_in_graph_file = f"{self.processed_dir}/neg_train_in_graph.parquet"
+        self.negative_train_cold_start_file = f"{self.processed_dir}/neg_train_cold_start.parquet"
 
         self.train_edges_file = f"{self.processed_dir}/train_edges.parquet"
         self.train_graph_file = f"{self.processed_dir}/train_graph.pt"
