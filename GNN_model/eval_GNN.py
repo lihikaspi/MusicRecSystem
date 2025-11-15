@@ -171,9 +171,9 @@ class GNNEvaluator:
                 relevance[gt_items] = gt_adj
 
                 top_rel = relevance[topk_idx]
-                dcg = np.sum((2 ** np.maximum(top_rel, 0) - 1) / np.log2(np.arange(2, k + 2)))
+                dcg = np.sum(top_rel / np.log2(np.arange(2, k + 2)))
                 ideal = np.sort(np.maximum(gt_adj, 0))[::-1][:k]
-                idcg = np.sum((2 ** ideal - 1) / np.log2(np.arange(2, len(ideal) + 2)))
+                idcg = np.sum(ideal / np.log2(np.arange(2, len(ideal) + 2)))
                 ndcg = dcg / (idcg if idcg > 0 else 1.0)
                 metrics["ndcg@k"].append(ndcg)
 

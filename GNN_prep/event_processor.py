@@ -190,7 +190,7 @@ class EventProcessor:
         Removes negative interactions from the train set
         """
         query = f"""
-            CREATE TEMPORARY no_neg_train_events AS
+            CREATE TEMPORARY TABLE no_neg_train_events AS
             SELECT *
             FROM split_data 
             WHERE event_type IN ('listen', 'like', 'undislike')
@@ -391,7 +391,7 @@ class EventProcessor:
         self._compute_relevance_scores()
         self._save_cold_start_songs()
         self._remove_neg_train_edges()
-        self._save_neg_interactions('train')
+        self._save_neg_interactions()
         self._save_splits()
 
 

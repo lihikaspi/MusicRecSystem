@@ -212,7 +212,6 @@ class GNNConfig:
     embed_dim: int = 128
     num_layers: int = 3
     lambda_align: float = 0.0
-    freeze_audio: bool = True
     audio_lr_scale: float = 0.1
 
     edge_mlp_hidden_dim: int = 8
@@ -228,14 +227,14 @@ class GNNConfig:
     init_std: float = 0.005
 
     num_epochs: int = 50
-    batch_size: int = 16
+    batch_size: int = 32
     weight_decay: float = 1e-5
     num_workers: int = 16
     eval_every: int = 5
     neg_samples_per_pos: int = 5
-    accum_steps: int = 8
-    audio_scale: float = 0.3
-    metadata_scale: float = 0.418
+    accum_steps: int = 2
+    audio_scale: float = 0.5
+    metadata_scale: float = 30.0
 
     eval_batch_size: int = 512
 
