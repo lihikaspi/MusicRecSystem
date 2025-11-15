@@ -28,7 +28,7 @@ class EdgeAssembler:
         Creates a temporary table 'filtered_events' for aggregation.
         """
         cancel_query = f"""
-        CREATE TEMPORARY TABLE filtered_events AS
+        CREATE TEMPORARY TABLE no_cancelled_events AS
         SELECT *
         FROM read_parquet('{self.train_path}') e
         WHERE e.event_type = 'listen'

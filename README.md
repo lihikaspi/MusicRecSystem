@@ -37,7 +37,7 @@ retrieval and evaluation.
 
 ```bash
 # Clone repository and navigate to project directory
-cd music-recommendation-system
+cd your/path/to
 
 # Install dependencies (requires Python 3.10+)
 pip install -r requirements.txt
@@ -169,8 +169,8 @@ print(f"PyG version: {torch_geometric.__version__}")
 ```
 ├── GNN/
     ├── best_model.pth          # best GNN models based on validation evaluation
-    ├── user_embeddings.pt      # final user embeddings
-    └── song_embessings.pt      # final song embeddings
+    ├── user_embeddings.npz     # final user embeddings
+    └── song_embessings.npz     # final song embeddings
 └── ANN/
     ├── index.faiss             # ANN index
     └── song_ids.npy            # song IDs
@@ -381,7 +381,7 @@ python run_GNN_train.py
 
 #### 1. Training
 
-Construct the model (`LightGCN` defined in `GNN_class.py`) and train it on the prepared graph (`GNNTrainer` defined in `train_GNN.py`):
+The model (`LightGCN` defined in `GNN_model/GNN_class.py`) is trained using the `GNNTrainer` class (`GNN_model/train_GNN.py`):
 
 - Model: **LightGCN with weighted edges** to capture different event types.
 - Fixed audio embeddings for songs; learnable embeddings for users, artists, albums.

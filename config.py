@@ -60,6 +60,7 @@ class PathsConfig:
     train_set_file: str = field(init=False)
     val_set_file: str = field(init=False)
     test_set_file: str = field(init=False)
+
     cold_start_songs_file: str = field(init=False)
     filtered_audio_embed_file: str = field(init=False)
     filtered_user_embed_file: str = field(init=False)
@@ -67,9 +68,12 @@ class PathsConfig:
     filtered_user_ids: str = field(init=False)
     popular_song_ids: str = field(init=False)
     positive_interactions_file: str = field(init=False)
+    negative_train_interactions_file: str = field(init=False)
+
     train_edges_file: str = field(init=False)
     train_graph_file: str = field(init=False)
     test_graph_file: str = field(init=False)
+
     val_scores_file: str = field(init=False)
     test_scores_file: str = field(init=False)
 
@@ -125,6 +129,7 @@ class PathsConfig:
         self.filtered_user_ids = f"{self.processed_dir}/filtered_user_ids.npy"
         self.popular_song_ids = f"{self.processed_dir}/popular_song_ids.npy"
         self.positive_interactions_file = f"{self.processed_dir}/positive_interactions.parquet"
+        self.negative_train_interactions_file = f"{self.processed_dir}/negative_train_interactions.parquet"
 
         self.train_edges_file = f"{self.processed_dir}/train_edges.parquet"
         self.train_graph_file = f"{self.processed_dir}/train_graph.pt"

@@ -35,6 +35,7 @@ class EventProcessor:
         self.filtered_user_ids = config.paths.filtered_user_ids
         self.popular_song_ids = config.paths.popular_song_ids
         self.positive_interactions_file = config.paths.positive_interactions_file
+        self.negative_train_interactions_file = config.paths.negative_train_interactions_file
 
         self.top_k = config.gnn.top_popular_k
         self.weight = config.preprocessing.weights
@@ -155,15 +156,6 @@ class EventProcessor:
               f"{self.split_ratios['val'] * 100}% validation set\n"
               f"{self.split_ratios['test'] * 100}% test set\n")
 
-        self.con.execute(f"COPY (SELECT * FROM split_data WHERE split='train') TO '{self.split_paths['train']}' (FORMAT PARQUET)")
-        print(f"Train data saved to {self.split_paths['train']}")
-
-        self.con.execute(f"COPY (SELECT * FROM split_data WHERE split='val') TO '{self.split_paths['val']}' (FORMAT PARQUET)")
-        print(f"Validation data saved to {self.split_paths['val']}")
-
-        self.con.execute(f"COPY (SELECT * FROM split_data WHERE split='test') TO '{self.split_paths['test']}' (FORMAT PARQUET)")
-        print(f"Test data saved to {self.split_paths['test']}")
-
 
     def _save_cold_start_songs(self):
         """
@@ -192,6 +184,47 @@ class EventProcessor:
         print(f'Cold start songs file saved to {self.cold_start_songs_path}')
 
 
+    def _remove_neg_train_edges(self):
+        """
+        Removes negative interactions from the train set
+        """
+        query = f"""
+            CREATE TEMPORARY no_neg_train_events AS
+            SELECT *
+            FROM split_data 
+            WHERE event_type IN ('listen', 'like', 'undislike')
+            AND split = 'train'
+        """
+
+        self.con.execute(query)
+        print("Finished removing negative edges")
+
+
+    def _save_neg_interactions(self, split: str):
+        query = f"""
+            CREATE TEMPORARY TABLE neg_interactions AS
+            SELECT uid, user_id, item_id, DISTINCT event_type 
+            FROM split_data
+            WHERE event_type NOT IN ('listen', 'like', 'undislike')
+            AND split = {split}
+        """
+
+        self.con.execute(query)
+        self.con.execute(f"COPY (SELECT * FROM neg_interactions) TO {self.negative_train_interactions_file} (FORMAT PARQUET)")
+        print(f"Saved {split} negative interactions")
+
+
+    def _save_splits(self):
+        self.con.execute(f"COPY (SELECT * FROM no_neg_train_events) TO '{self.split_paths['train']}' (FORMAT PARQUET)")
+        print(f"Train data saved to {self.split_paths['train']}")
+
+        self.con.execute(f"COPY (SELECT * FROM split_data WHERE split='val') TO '{self.split_paths['val']}' (FORMAT PARQUET)")
+        print(f"Validation data saved to {self.split_paths['val']}")
+
+        self.con.execute(f"COPY (SELECT * FROM split_data WHERE split='test') TO '{self.split_paths['test']}' (FORMAT PARQUET)")
+        print(f"Test data saved to {self.split_paths['test']}")
+
+
     def split_data(self, split_ratios: dict = None):
         """
         splits the filtered multi-event file into train, validation and test sets and
@@ -206,6 +239,9 @@ class EventProcessor:
         self._split_data()
         self._compute_relevance_scores()
         self._save_cold_start_songs()
+        self._remove_neg_train_edges()
+        self._save_neg_interactions('train')
+        self._save_splits()
 
 
     def _process_split(self, split: str, case_base: str, novelty_params: dict, out_path: str):
@@ -274,13 +310,13 @@ class EventProcessor:
                 -- Calculate novelty factor
                 (CASE WHEN seen_in_train = 0 THEN {n['unseen_boost']} ELSE 0 END)
                 - {n['train_penalty']} * LEAST(train_play_cnt, {n['max_familiarity']}) / {n['max_familiarity']}
-                + CASE WHEN seen_in_train = 1 THEN
-                        EXP(-{n['recency_beta']} * (EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) - latest_ts))
-                      ELSE 0 END
+                -- + CASE WHEN seen_in_train = 1 THEN
+                --         EXP(-{n['recency_beta']} * (EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) - latest_ts))
+                --      ELSE 0 END
                 AS novelty_factor,
 
                 -- Calculate final adjusted score
-                base_relevance * (1 + novelty_factor) AS adjusted_score
+                (base_relevance * (1 + novelty_factor))^2 AS adjusted_score
 
             FROM {split}_scores
         """
@@ -307,7 +343,7 @@ class EventProcessor:
         case_base = "CASE e.event_type\n"
         for etype, weight in weights.items():
             if etype == "listen":
-                case_base += f"    WHEN '{etype}' THEN {weight} * (COALESCE(e.played_ratio_pct,0)/100.0)\n"
+                case_base += f"    WHEN '{etype}' THEN {weight} * ((COALESCE(e.played_ratio_pct,0)/100.0)-0.7)\n"
             else:
                 case_base += f"    WHEN '{etype}' THEN {weight}\n"
         case_base += "    ELSE 0.0 END"
