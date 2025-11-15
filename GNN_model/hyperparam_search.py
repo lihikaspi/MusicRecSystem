@@ -8,13 +8,13 @@ from GNN_model.eval_GNN import GNNEvaluator
 from config import config
 
 
-def test_evaluation(model: LightGCN, train_graph: HeteroData):
-    test_evaluator = GNNEvaluator(model, train_graph, "test", config)
-    test_metrics = test_evaluator.evaluate()
+def val_evaluation(model: LightGCN, train_graph: HeteroData):
+    val_evaluator = GNNEvaluator(model, train_graph, "val", config)
+    val_metrics = val_evaluator.evaluate()
 
-    print(f"trial NDCG@K: {test_metrics['ndcg@k']}")
+    print(f"trial NDCG@K: {val_metrics['ndcg@k']}")
 
-    return test_metrics['ndcg@k']
+    return val_metrics['ndcg@k']
 
 
 def objective(trial):
@@ -45,6 +45,11 @@ def objective(trial):
         config.gnn.neutral_neg_weight = neutral_neg_weight
         config.gnn.num_layers = num_layers
 
+        config.gnn.num_epochs = 15
+
+        config.gnn.batch_size = 16
+        config.gnn.accum_steps = 4
+
         torch.cuda.empty_cache()
 
         train_graph = torch.load(config.paths.train_graph_file)
@@ -53,10 +58,10 @@ def objective(trial):
         trainer = GNNTrainer(model, train_graph, config)
 
         # Optional: short training for hyperparameter search
-        trainer.num_epochs = 8
+        # trainer.num_epochs = 8
         trainer.train(trial=True)
 
-        metric = test_evaluation(model, train_graph)  # returns the rank-based metric you care about
+        metric = val_evaluation(model, train_graph)  # returns the rank-based metric you care about
 
         return metric
 
@@ -71,7 +76,15 @@ def objective(trial):
 
 
 def main():
-    study = optuna.create_study(direction="maximize")
+    storage_url = "sqlite:///hp_search.db"
+    study_name = "gnn_hp_search"
+
+    study = optuna.create_study(
+        storage=storage_url,
+        study_name=study_name,
+        direction="maximize",
+        load_if_exists=True
+    )
     study.optimize(objective, n_trials=20)
 
     best_params = study.best_params
