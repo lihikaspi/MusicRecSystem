@@ -277,9 +277,14 @@ class GNNTrainer:
         self.weight_decay = config.gnn.weight_decay
         self.max_grad_norm = config.gnn.max_grad_norm
 
+        self.dropout = config.gnn.dropout
+
         self.step_count = 0
         self.warmup_steps = len(self.loader)
         self.accum_steps = config.gnn.accum_steps
+
+        self.best_ndcg = 0.0
+        self.best_metrics = None
 
     def _get_lr(self, epoch):
         """
@@ -326,8 +331,6 @@ class GNNTrainer:
         os.makedirs(os.path.dirname(self.save_path), exist_ok=True)
         self.model.to(self.device)
 
-        best_ndcg = 0.0
-        best_metrics = None
         patience = 0
         max_patience = 10
 
@@ -369,7 +372,7 @@ class GNNTrainer:
 
                 # --- [ NEW ] ADD EDGE DROPOUT (TRAIN-ONLY) ---
                 # if self.model.training:
-                #     dropout_rate = 0.2
+                #     dropout_rate = self.dropout
                 #     keep_mask = (torch.rand(edge_index_sub.size(1), device=edge_index_sub.device) > dropout_rate)
                 #     edge_index_sub = edge_index_sub[:, keep_mask]
                 #     edge_weight_sub = edge_weight_sub[keep_mask]
@@ -454,17 +457,18 @@ class GNNTrainer:
                     neg_i_emb[in_graph_mask] = in_graph_embeds_flat
 
                 # --- [ NEW ] ADD NODE/EMBEDDING DROPOUT ---
-                # if self.model.training:
-                #     u_emb = F.dropout(u_emb, p=0.2, training=True)
-                #     pos_i_emb = F.dropout(pos_i_emb, p=0.2, training=True)
-                    # neg_i_emb = F.dropout(neg_i_emb, p=0.2, training=True)
+                if self.model.training:
+                    u_emb = F.dropout(u_emb, p=self.dropout, training=True)
+                    pos_i_emb = F.dropout(pos_i_emb, p=self.dropout, training=True)
+                    neg_i_emb = F.dropout(neg_i_emb, p=self.dropout, training=True)
                 # --- [ END NEW ] ---
 
                 # --- Calculate Weighted BPR Loss ---
                 pos_scores = (u_emb * pos_i_emb).sum(dim=-1, keepdim=True)  # [B, 1]
                 neg_scores = (u_emb.unsqueeze(1) * neg_i_emb).sum(dim=-1)  # [B, k]
 
-                diff = pos_scores - neg_scores
+                margin = 0.2  # This is a new (non-HP) value you can set
+                diff = pos_scores - neg_scores - margin
                 loss_per_neg = -F.logsigmoid(diff)  # [B, k]
 
                 # Apply weights
@@ -517,10 +521,10 @@ class GNNTrainer:
             cur_ndcg = val_metrics['ndcg@k']
             print(f"Epoch {epoch} | NDCG@K: {cur_ndcg:.6f}")
 
-            if cur_ndcg > best_ndcg:
-                improvement = cur_ndcg - best_ndcg
-                best_ndcg = cur_ndcg
-                best_metrics = val_metrics
+            if cur_ndcg > self.best_ndcg:
+                improvement = cur_ndcg - self.best_ndcg
+                self.best_ndcg = cur_ndcg
+                self.best_metrics = val_metrics
                 patience = 0
                 if not trial:
                     torch.save(self.model.state_dict(), self.save_path)
@@ -534,8 +538,8 @@ class GNNTrainer:
 
         print(f"\n>>> finished training")
 
-        print(f"Best NDCG@K: {best_ndcg:.6f}")
+        print(f"Best NDCG@K: {self.best_ndcg:.6f}")
         if not trial:
             with open(self.config.paths.val_eval, "w") as f:
-                json.dump(best_metrics, f, indent=4)
+                json.dump(self.best_metrics, f, indent=4)
             print(f"Model saved to {self.save_path}")

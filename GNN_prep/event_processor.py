@@ -369,30 +369,11 @@ class EventProcessor:
         case_base = "CASE e.event_type\n"
         for etype, weight in weights.items():
             if etype == "listen":
-                case_base += f"    WHEN '{etype}' THEN {weight} * ((COALESCE(e.played_ratio_pct,0)/100.0)-0.7)\n"
+                case_base += f"    WHEN '{etype}' THEN {weight} * ((COALESCE(e.played_ratio_pct,0)/100.0))\n"
             else:
                 case_base += f"    WHEN '{etype}' THEN {weight}\n"
         case_base += "    ELSE 0.0 END"
         return case_base
-
-
-    def split_data(self, split_ratios: dict = None):
-        """
-        splits the filtered multi-event file into train, validation and test sets and
-        saves the embeddings of the cold-start songs.
-
-        Args:
-            split_ratios: dictionary of split ratios, default: none
-        """
-        if split_ratios is not None:
-            self.split_ratios = split_ratios
-
-        self._split_data()
-        self._compute_relevance_scores()
-        self._save_cold_start_songs()
-        self._remove_neg_train_edges()
-        self._save_neg_interactions()
-        self._save_splits()
 
 
     def _compute_relevance_scores(self):
@@ -425,6 +406,25 @@ class EventProcessor:
             out_path=self.test_scores  # Assuming paths are still in Config
         )
         print("Relevance score processing complete.")
+
+
+    def split_data(self, split_ratios: dict = None):
+        """
+        splits the filtered multi-event file into train, validation and test sets and
+        saves the embeddings of the cold-start songs.
+
+        Args:
+            split_ratios: dictionary of split ratios, default: none
+        """
+        if split_ratios is not None:
+            self.split_ratios = split_ratios
+
+        self._split_data()
+        self._compute_relevance_scores()
+        self._save_cold_start_songs()
+        self._remove_neg_train_edges()
+        self._save_neg_interactions()
+        self._save_splits()
 
 
     def _save_filtered_user_ids(self):

@@ -18,3 +18,4 @@ torch-sparse==0.6.18+pt20cu118
 tqdm==4.67.1
 typing==3.7.4.3
 optuna==4.5.0
+optuna-dashboard==0.20.0

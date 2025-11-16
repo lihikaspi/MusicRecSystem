@@ -235,6 +235,7 @@ class GNNConfig:
     accum_steps: int = 2
     audio_scale: float = 0.5
     metadata_scale: float = 30.0
+    dropout: float = 0.1
 
     eval_batch_size: int = 512
 
