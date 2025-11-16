@@ -11,33 +11,35 @@ from config import config
 def objective(trial):
     # --- CORRECTED RANGES ---
     try:
-        # lr: Range shrunk. 0.1 is very high for this type of model.
-        # Centered around your default of 0.01.
         lr = trial.suggest_float("lr", 1e-4, 5e-2, log=True)
-
-        # neg_samples_per_pos: Range is good, centered on default of 5.
-        neg_samples_per_pos = trial.suggest_int("neg_samples_per_pos", 2, 8)
-
-        # listen_weight: Range extended to 1.0 to test "no extra weight".
-        listen_weight = trial.suggest_float("listen_weight", 0.5, 1.0)
-
-        # neutral_neg_weight: Range is good, centered on default of 0.3.
-        neutral_neg_weight = trial.suggest_float("neutral_neg_weight", 0.1, 0.5)
-
-        # num_layers: Range shrunk significantly. LightGCN over-smooths.
-        # Centered around your default of 3.
+        # neg_samples_per_pos = trial.suggest_int("neg_samples_per_pos", 2, 8)
+        # listen_weight = trial.suggest_float("listen_weight", 0.5, 1.0)
+        # neutral_neg_weight = trial.suggest_float("neutral_neg_weight", 0.1, 0.5)
         num_layers = trial.suggest_int("num_layers", 2, 5)
+        weight_decay = trial.suggest_float("weight_decay", 1e-6, 1e-3, log=True)
+        dropout = trial.suggest_float("dropout", 0.0, 0.5)
+        metadata_scale = trial.suggest_float("metadata_scale", 1.0, 50.0, log=True)
+        audio_scale = trial.suggest_float("audio_scale", 0.1, 2.0)
+        # margin = trial.suggest_float("bpr_margin", 0.1, 0.5)
 
-        # --- END CORRECTIONS ---
+        bs_config = trial.suggest_categorical("bs_config",
+                                              ["8_4", "16_2", "16_4", "32_2"])
+        bs, accum = map(int, bs_config.split('_'))
 
         config.gnn.lr = lr
-        config.gnn.neg_samples_per_pos = neg_samples_per_pos
-        config.gnn.listen_weight = listen_weight
-        config.gnn.neutral_neg_weight = neutral_neg_weight
+        # config.gnn.neg_samples_per_pos = neg_samples_per_pos
+        # config.gnn.listen_weight = listen_weight
+        # config.gnn.neutral_neg_weight = neutral_neg_weight
         config.gnn.num_layers = num_layers
+        config.gnn.weight_decay = weight_decay
+        config.gnn.dropout = dropout
+        config.gnn.metadata_scale = metadata_scale
+        config.gnn.audio_scale = audio_scale
+        # config.gnn.bpr_margin = margin
 
-        config.gnn.batch_size = 16
-        config.gnn.accum_steps = 4
+        config.gnn.batch_size = bs
+        config.gnn.accum_steps = accum
+
 
         torch.cuda.empty_cache()
 
@@ -65,7 +67,7 @@ def objective(trial):
 
 def main():
     storage_url = f"sqlite:///{config.paths.eval_dir}/hp_search.db"
-    study_name = "gnn_hp_search"
+    study_name = "gnn_hp_search_first_pass"
 
     study = optuna.create_study(
         storage=storage_url,
@@ -73,7 +75,7 @@ def main():
         direction="maximize",
         load_if_exists=True
     )
-    study.optimize(objective, n_trials=20)
+    study.optimize(objective, n_trials=50)
 
     best_params = study.best_params
 

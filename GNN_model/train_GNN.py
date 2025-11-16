@@ -278,6 +278,7 @@ class GNNTrainer:
         self.max_grad_norm = config.gnn.max_grad_norm
 
         self.dropout = config.gnn.dropout
+        self.margin = config.gnn.margin
 
         self.step_count = 0
         self.warmup_steps = len(self.loader)
@@ -467,8 +468,7 @@ class GNNTrainer:
                 pos_scores = (u_emb * pos_i_emb).sum(dim=-1, keepdim=True)  # [B, 1]
                 neg_scores = (u_emb.unsqueeze(1) * neg_i_emb).sum(dim=-1)  # [B, k]
 
-                margin = 0.2  # This is a new (non-HP) value you can set
-                diff = pos_scores - neg_scores - margin
+                diff = pos_scores - neg_scores - self.margin
                 loss_per_neg = -F.logsigmoid(diff)  # [B, k]
 
                 # Apply weights

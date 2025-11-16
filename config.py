@@ -236,6 +236,7 @@ class GNNConfig:
     audio_scale: float = 0.5
     metadata_scale: float = 30.0
     dropout: float = 0.1
+    margin: float = 0.2
 
     eval_batch_size: int = 512
 
